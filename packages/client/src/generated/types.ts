@@ -1595,6 +1595,14 @@ export type SessionsInterruptInput = { readonly sessionID: { readonly sessionID:
 
 export type SessionsInterruptOutput = void
 
+export type SessionsInterruptManyInput = {
+  readonly sessionIDs: { readonly sessionIDs: ReadonlyArray<string> }["sessionIDs"]
+}
+
+export type SessionsInterruptManyOutput = {
+  readonly data: ReadonlyArray<{ readonly sessionID: string; readonly status: "interrupted" | "idle" | "not_found" }>
+}["data"]
+
 export type SessionsMessageInput = {
   readonly sessionID: { readonly sessionID: string; readonly messageID: string }["sessionID"]
   readonly messageID: { readonly sessionID: string; readonly messageID: string }["messageID"]

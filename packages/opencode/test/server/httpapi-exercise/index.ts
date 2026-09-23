@@ -1117,6 +1117,49 @@ const scenarios: Scenario[] = [
     }))
     .status(204, undefined, "none"),
   http.protected
+    .post("/api/session/interrupt", "v2.session.interruptMany")
+    .seeded((ctx) => ctx.session({ title: "Interrupt sessions" }))
+    .at((ctx) => ({
+      path: "/api/session/interrupt",
+      body: { sessionIDs: [ctx.state.id] },
+      headers: ctx.headers(),
+    }))
+    .json(
+      200,
+      (body) => {
+        object(body)
+        array(body.data)
+        check(body.data.length === 1, "Expected one interrupt result")
+        check(isRecord(body.data[0]) && body.data[0].status === "idle", "Expected an idle result")
+      },
+      "none",
+    ),
+  http.protected
+    .post("/api/session/interrupt", "v2.session.interruptMany.duplicate")
+    .seeded((ctx) => ctx.session({ title: "Duplicate interrupt sessions" }))
+    .at((ctx) => ({
+      path: "/api/session/interrupt",
+      body: { sessionIDs: [ctx.state.id, ctx.state.id] },
+      headers: ctx.headers(),
+    }))
+    .status(400, undefined, "none"),
+  http.protected
+    .post("/api/session/interrupt", "v2.session.interruptMany.tooMany")
+    .at((ctx) => ({
+      path: "/api/session/interrupt",
+      body: { sessionIDs: Array.from({ length: 101 }, (_, index) => `ses_${String(index).padStart(3, "0")}`) },
+      headers: ctx.headers(),
+    }))
+    .status(400, undefined, "none"),
+  http.protected
+    .post("/api/session/interrupt", "v2.session.interruptMany.empty")
+    .at((ctx) => ({
+      path: "/api/session/interrupt",
+      body: { sessionIDs: [] },
+      headers: ctx.headers(),
+    }))
+    .status(400, undefined, "none"),
+  http.protected
     .get("/api/session/{sessionID}/message/{messageID}", "v2.session.message.missing")
     .at((ctx) => ({
       path: route("/api/session/{sessionID}/message/{messageID}", {

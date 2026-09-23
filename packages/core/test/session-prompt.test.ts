@@ -22,6 +22,7 @@ import { testEffect } from "./lib/effect"
 
 const executionCalls: SessionV2.ID[] = []
 const interruptCalls: SessionV2.ID[] = []
+const interruptManyCalls: ReadonlyArray<SessionV2.ID>[] = []
 const wakeCalls: SessionV2.ID[] = []
 const activeSessions = new Set<SessionV2.ID>()
 const execution = Layer.succeed(
@@ -35,6 +36,14 @@ const execution = Layer.succeed(
     interrupt: (sessionID) =>
       Effect.sync(() => {
         interruptCalls.push(sessionID)
+      }),
+    interruptMany: (sessionIDs) =>
+      Effect.sync(() => {
+        interruptManyCalls.push(sessionIDs)
+        return sessionIDs.map((sessionID) => ({
+          sessionID,
+          status: activeSessions.has(sessionID) ? ("interrupted" as const) : ("idle" as const),
+        }))
       }),
     wake: (sessionID) =>
       Effect.sync(() => {
@@ -138,6 +147,25 @@ describe("SessionV2.prompt", () => {
       yield* session.interrupt(SessionV2.ID.make("ses_missing"))
       expect(interruptCalls).toEqual([SessionV2.ID.make("ses_missing")])
     }),
+  )
+
+  it.effect("interrupts a batch and reports missing sessions", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const missing = SessionV2.ID.make("ses_missing_batch")
+      interruptManyCalls.length = 0
+      activeSessions.clear()
+      activeSessions.add(sessionID)
+
+      const results = yield* session.interruptMany([sessionID, missing, sessionID])
+
+      expect(results).toEqual([
+        { sessionID, status: "interrupted" },
+        { sessionID: missing, status: "not_found" },
+      ])
+      expect(interruptManyCalls).toEqual([[sessionID]])
+    }).pipe(Effect.ensuring(Effect.sync(() => activeSessions.clear()))),
   )
 
   it.effect("durably admits one user message before transcript promotion", () =>

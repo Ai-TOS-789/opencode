@@ -106,6 +106,8 @@ test("session methods use the public HTTP contract", async () => {
       if (url.includes("/context")) return Response.json({ data: [] })
       if (url.includes("/message/")) return Response.json({ data: modelSwitchedMessage })
       if (url.endsWith("/api/session/active")) return Response.json({ data: { ses_test: { type: "running" } } })
+      if (init?.method === "POST" && url.endsWith("/api/session/interrupt"))
+        return Response.json({ data: [{ sessionID: "ses_test", status: "idle" }] })
       if (init?.method === "POST" && url.endsWith("/api/session")) return Response.json(session)
       if (init?.method === "POST") return new Response(null, { status: 204 })
       return Response.json({ data: [session.data], cursor: { next: "next" } })
@@ -136,6 +138,7 @@ test("session methods use the public HTTP contract", async () => {
   const events = []
   for await (const event of client.sessions.events({ sessionID: "ses_test", after: 0 })) events.push(event)
   await client.sessions.interrupt({ sessionID: "ses_test" })
+  const interrupted = await client.sessions.interruptMany({ sessionIDs: ["ses_test"] })
   const message = await client.sessions.message({ sessionID: "ses_test", messageID: "msg_model" })
 
   expect(page.cursor.next).toBe("next")
@@ -146,6 +149,7 @@ test("session methods use the public HTTP contract", async () => {
   expect(history).toEqual({ data: [modelSwitchedEvent], hasMore: true })
   expect(historyNext).toEqual({ data: [], hasMore: false })
   expect(events).toEqual([modelSwitchedEvent])
+  expect(interrupted).toEqual([{ sessionID: "ses_test", status: "idle" }])
   expect(message).toEqual(modelSwitchedMessage)
   expect(requests.map((request) => [request.init?.method, request.url])).toEqual([
     ["GET", "http://localhost:3000/api/session?limit=10&order=desc"],
@@ -161,6 +165,7 @@ test("session methods use the public HTTP contract", async () => {
     ["GET", "http://localhost:3000/api/session/ses_test/history?limit=2&after=1"],
     ["GET", "http://localhost:3000/api/session/ses_test/event?after=0"],
     ["POST", "http://localhost:3000/api/session/ses_test/interrupt"],
+    ["POST", "http://localhost:3000/api/session/interrupt"],
     ["GET", "http://localhost:3000/api/session/ses_test/message/msg_model"],
   ])
   const body = requests.find((request) => request.url.endsWith("/api/session/ses_test/prompt"))?.init?.body

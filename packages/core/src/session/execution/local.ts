@@ -31,6 +31,15 @@ const layer = Layer.effect(
     return SessionExecution.Service.of({
       active: coordinator.active,
       interrupt: coordinator.interrupt,
+      interruptMany: (sessionIDs) =>
+        coordinator.interruptMany(sessionIDs).pipe(
+          Effect.map((results) =>
+            results.map((result) => ({
+              sessionID: result.key,
+              status: result.status,
+            })),
+          ),
+        ),
       resume: coordinator.run,
       wake: coordinator.wake,
     })

@@ -195,6 +195,7 @@ import type {
   SessionGetResponses,
   SessionInitErrors,
   SessionInitResponses,
+  SessionInterruptInput,
   SessionListErrors,
   SessionListResponses,
   SessionMessageErrors,
@@ -348,6 +349,8 @@ import type {
   V2SessionHistoryErrors,
   V2SessionHistoryResponses,
   V2SessionInterruptErrors,
+  V2SessionInterruptManyErrors,
+  V2SessionInterruptManyResponses,
   V2SessionInterruptResponses,
   V2SessionListErrors,
   V2SessionListResponses,
@@ -5790,6 +5793,34 @@ export class Session3 extends HeyApiClient {
       url: "/api/session/{sessionID}/interrupt",
       ...options,
       ...params,
+    })
+  }
+
+  /**
+   * Interrupt multiple sessions
+   *
+   * Interrupt up to 100 sessions concurrently. Results are returned in request order; idle means no active execution is owned by this process and not_found means the session does not exist.
+   */
+  public interruptMany<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionInterruptInput: SessionInterruptInput
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ key: "sessionInterruptInput", map: "body" }] }])
+    return (options?.client ?? this.client).post<
+      V2SessionInterruptManyResponses,
+      V2SessionInterruptManyErrors,
+      ThrowOnError
+    >({
+      url: "/api/session/interrupt",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 

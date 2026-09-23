@@ -248,6 +248,15 @@ const execution = Layer.effect(
       resume: coordinator.run,
       wake: coordinator.wake,
       interrupt: coordinator.interrupt,
+      interruptMany: (sessionIDs) =>
+        coordinator.interruptMany(sessionIDs).pipe(
+          Effect.map((results) =>
+            results.map((result) => ({
+              sessionID: result.key,
+              status: result.status,
+            })),
+          ),
+        ),
     })
   }),
 ).pipe(Layer.provide(runnerLayer))

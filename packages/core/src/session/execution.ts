@@ -6,6 +6,13 @@ import { Node } from "../effect/app-node"
 import { SessionRunner } from "./runner/index"
 import { SessionSchema } from "./schema"
 
+export type InterruptStatus = "interrupted" | "idle"
+
+export type InterruptResult = {
+  readonly sessionID: SessionSchema.ID
+  readonly status: InterruptStatus
+}
+
 export interface Interface {
   /** Snapshots active execution owned by this process. */
   readonly active: Effect.Effect<ReadonlySet<SessionSchema.ID>>
@@ -15,6 +22,8 @@ export interface Interface {
   readonly wake: (sessionID: SessionSchema.ID) => Effect.Effect<void>
   /** Interrupt active work owned by this process. Idle interruption is a no-op. */
   readonly interrupt: (sessionID: SessionSchema.ID) => Effect.Effect<void>
+  /** Interrupt multiple sessions and report whether each was active at lookup. */
+  readonly interruptMany: (sessionIDs: ReadonlyArray<SessionSchema.ID>) => Effect.Effect<ReadonlyArray<InterruptResult>>
 }
 
 /** Routes execution from a Session ID to the runner owned by that Session's Location. */
@@ -30,5 +39,12 @@ export const noopLayer = Layer.succeed(
     resume: () => Effect.void,
     wake: () => Effect.void,
     interrupt: () => Effect.void,
+    interruptMany: (sessionIDs) =>
+      Effect.succeed(
+        sessionIDs.map((sessionID) => ({
+          sessionID,
+          status: "idle" as const,
+        })),
+      ),
   }),
 )

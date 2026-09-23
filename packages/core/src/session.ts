@@ -110,6 +110,11 @@ export type MessageNotFoundError = SessionRevert.MessageNotFoundError
 
 export type Error = NotFoundError | MessageDecodeError | OperationUnavailableError | PromptConflictError
 
+export type InterruptResult = {
+  readonly sessionID: SessionSchema.ID
+  readonly status: "interrupted" | "idle" | "not_found"
+}
+
 export interface Interface {
   readonly list: (input?: ListInput) => Effect.Effect<SessionSchema.Info[]>
   readonly create: (input: CreateInput) => Effect.Effect<SessionSchema.Info>
@@ -168,6 +173,7 @@ export interface Interface {
   readonly active: Effect.Effect<ReadonlySet<SessionSchema.ID>>
   readonly resume: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError | SessionRunner.RunError>
   readonly interrupt: (sessionID: SessionSchema.ID) => Effect.Effect<void>
+  readonly interruptMany: (sessionIDs: ReadonlyArray<SessionSchema.ID>) => Effect.Effect<ReadonlyArray<InterruptResult>>
   readonly revert: {
     readonly stage: (input: {
       sessionID: SessionSchema.ID
@@ -430,6 +436,27 @@ const layer = Layer.effect(
       interrupt: Effect.fn("V2Session.interrupt")((sessionID) =>
         Effect.uninterruptible(execution.interrupt(sessionID)),
       ),
+      interruptMany: Effect.fn("V2Session.interruptMany")(function* (sessionIDs) {
+        const unique = Array.from(new Set(sessionIDs))
+        const existing = yield* Effect.forEach(
+          unique,
+          (sessionID) =>
+            result.get(sessionID).pipe(
+              Effect.as(sessionID),
+              Effect.catchTag("Session.NotFoundError", () => Effect.succeed(undefined)),
+            ),
+          { concurrency: "unbounded" },
+        )
+        const existingIDs = existing.filter((sessionID): sessionID is SessionSchema.ID => sessionID !== undefined)
+        const statuses = yield* Effect.uninterruptible(execution.interruptMany(existingIDs))
+        const statusByID = new Map<SessionSchema.ID, "interrupted" | "idle">(
+          statuses.map((result) => [result.sessionID, result.status]),
+        )
+        return unique.map((sessionID) => ({
+          sessionID,
+          status: statusByID.get(sessionID) ?? ("not_found" as const),
+        }))
+      }),
       revert: {
         stage: Effect.fn("V2Session.revert.stage")(function* (input) {
           const session = yield* result.get(input.sessionID)

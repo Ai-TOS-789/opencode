@@ -2,10 +2,11 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { DateTime, Effect, Stream } from "effect"
 import { HttpApiBuilder, HttpApiSchema } from "effect/unstable/httpapi"
 import { Api } from "../api"
-import { SessionsCursor } from "@opencode-ai/protocol/groups/session"
+import { SessionInterruptLimit, SessionsCursor } from "@opencode-ai/protocol/groups/session"
 import {
   ConflictError,
   InvalidCursorError,
+  InvalidRequestError,
   MessageNotFoundError,
   ServiceUnavailableError,
   SessionNotFoundError,
@@ -367,6 +368,23 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
         Effect.fn(function* (ctx) {
           yield* session.interrupt(ctx.params.sessionID)
           return HttpApiSchema.NoContent.make()
+        }),
+      )
+      .handle(
+        "session.interruptMany",
+        Effect.fn(function* (ctx) {
+          const sessionIDs = ctx.payload.sessionIDs
+          if (sessionIDs.length > SessionInterruptLimit)
+            return yield* new InvalidRequestError({
+              message: `Cannot interrupt more than ${SessionInterruptLimit} sessions`,
+              field: "sessionIDs",
+            })
+          if (new Set(sessionIDs).size !== sessionIDs.length)
+            return yield* new InvalidRequestError({
+              message: "sessionIDs must not contain duplicates",
+              field: "sessionIDs",
+            })
+          return { data: yield* session.interruptMany(sessionIDs) }
         }),
       )
       .handle(

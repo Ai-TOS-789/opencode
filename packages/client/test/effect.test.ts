@@ -100,6 +100,11 @@ test("session methods retain decoded Effect inputs and outputs", async () => {
         HttpClientResponse.fromWeb(request, Response.json({ data: { ses_test: { type: "running" } } })),
       )
     }
+    if (request.method === "POST" && url.endsWith("/api/session/interrupt")) {
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(request, Response.json({ data: [{ sessionID: "ses_test", status: "idle" }] })),
+      )
+    }
     if (request.method === "POST" && url.endsWith("/api/session")) {
       return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(session)))
     }
@@ -146,11 +151,12 @@ test("session methods retain decoded Effect inputs and outputs", async () => {
       .events({ sessionID: Session.ID.make("ses_test"), after: 0 })
       .pipe(Stream.runCollect)
     yield* client.sessions.interrupt({ sessionID: Session.ID.make("ses_test") })
+    const interrupted = yield* client.sessions.interruptMany({ sessionIDs: [Session.ID.make("ses_test")] })
     const message = yield* client.sessions.message({
       sessionID: Session.ID.make("ses_test"),
       messageID: SessionMessage.ID.make("msg_model"),
     })
-    return { page, active, created, admitted, context, history, historyNext, events, message }
+    return { page, active, created, admitted, context, history, historyNext, events, interrupted, message }
   }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.runPromise)
 
   expect(DateTime.toEpochMillis(result.page.data[0].time.created)).toBe(1_717_171_717_000)
@@ -168,6 +174,7 @@ test("session methods retain decoded Effect inputs and outputs", async () => {
   expect(historyQueries[0]).toEqual({ limit: "1", after: "0" })
   expect(historyQueries[1]).toEqual({ limit: "2", after: "1" })
   expect(DateTime.toEpochMillis(result.events[0].data.timestamp)).toBe(1_717_171_717_000)
+  expect(result.interrupted).toEqual([{ sessionID: "ses_test", status: "idle" }])
   expect(result.message).toEqual(expect.objectContaining({ id: "msg_model", type: "model-switched" }))
 })
 

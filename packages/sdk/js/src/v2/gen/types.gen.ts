@@ -2776,6 +2776,17 @@ export type SessionHistory = {
 
 export type SessionDurableEventStream = string
 
+export type SessionInterruptInput = {
+  sessionIDs: Array<string>
+}
+
+export type SessionInterruptStatus = "interrupted" | "idle" | "not_found"
+
+export type SessionInterruptResult = {
+  sessionID: string
+  status: SessionInterruptStatus
+}
+
 export type SessionMessagesResponse = {
   data: Array<SessionMessage>
   cursor: {
@@ -11949,6 +11960,37 @@ export type V2SessionInterruptResponses = {
 }
 
 export type V2SessionInterruptResponse = V2SessionInterruptResponses[keyof V2SessionInterruptResponses]
+
+export type V2SessionInterruptManyData = {
+  body: SessionInterruptInput
+  path?: never
+  query?: never
+  url: "/api/session/interrupt"
+}
+
+export type V2SessionInterruptManyErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+}
+
+export type V2SessionInterruptManyError = V2SessionInterruptManyErrors[keyof V2SessionInterruptManyErrors]
+
+export type V2SessionInterruptManyResponses = {
+  /**
+   * Success
+   */
+  200: {
+    data: Array<SessionInterruptResult>
+  }
+}
+
+export type V2SessionInterruptManyResponse = V2SessionInterruptManyResponses[keyof V2SessionInterruptManyResponses]
 
 export type V2SessionMessageData = {
   body?: never

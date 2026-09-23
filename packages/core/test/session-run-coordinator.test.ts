@@ -392,6 +392,84 @@ describe("SessionRunCoordinator", () => {
     ),
   )
 
+  it.effect("interrupts multiple keys and preserves input order", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstStarted = yield* Deferred.make<void>()
+        const secondStarted = yield* Deferred.make<void>()
+        const interrupted: string[] = []
+        const coordinator = yield* SessionRunCoordinator.make<string, never>({
+          drain: (key) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(key === "first" ? firstStarted : secondStarted, undefined)
+              return yield* Effect.never
+            }).pipe(Effect.onInterrupt(() => Effect.sync(() => void interrupted.push(key)))),
+        })
+
+        const first = yield* coordinator.run("first").pipe(Effect.forkChild)
+        yield* Deferred.await(firstStarted)
+        const second = yield* coordinator.run("second").pipe(Effect.forkChild)
+        yield* Deferred.await(secondStarted)
+
+        const statuses = yield* coordinator.interruptMany(["second", "missing", "first", "first"])
+
+        expect(statuses).toEqual([
+          { key: "second", status: "interrupted" },
+          { key: "missing", status: "idle" },
+          { key: "first", status: "interrupted" },
+          { key: "first", status: "interrupted" },
+        ])
+        expect(interrupted.toSorted()).toEqual(["first", "second"])
+        yield* Effect.all([Fiber.await(first), Fiber.await(second)])
+      }),
+    ),
+  )
+
+  it.effect("waits for every claimed cleanup before returning", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstStarted = yield* Deferred.make<void>()
+        const secondStarted = yield* Deferred.make<void>()
+        const firstCleanup = yield* Deferred.make<void>()
+        const secondCleanup = yield* Deferred.make<void>()
+        const releaseCleanup = yield* Deferred.make<void>()
+        const events: string[] = []
+        const coordinator = yield* SessionRunCoordinator.make<string, never>({
+          drain: (key) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(key === "first" ? firstStarted : secondStarted, undefined)
+              return yield* Effect.never
+            }).pipe(
+              Effect.onInterrupt(() =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(key === "first" ? firstCleanup : secondCleanup, undefined)
+                  yield* Deferred.await(releaseCleanup)
+                }),
+              ),
+            ),
+        })
+
+        const first = yield* coordinator.run("first").pipe(Effect.forkChild)
+        yield* Deferred.await(firstStarted)
+        const second = yield* coordinator.run("second").pipe(Effect.forkChild)
+        yield* Deferred.await(secondStarted)
+
+        const batch = yield* coordinator.interruptMany(["first", "second"]).pipe(
+          Effect.asVoid,
+          Effect.tap(() => Effect.sync(() => void events.push("batch"))),
+          Effect.forkChild,
+        )
+        yield* Effect.all([Deferred.await(firstCleanup), Deferred.await(secondCleanup)])
+        expect(events).toEqual([])
+
+        yield* Deferred.succeed(releaseCleanup, undefined)
+        yield* Fiber.await(batch)
+        expect(events).toEqual(["batch"])
+        yield* Effect.all([Fiber.await(first), Fiber.await(second)])
+      }),
+    ),
+  )
+
   it.effect("trampolines synchronous self-waking execution", () =>
     Effect.scoped(
       Effect.gen(function* () {

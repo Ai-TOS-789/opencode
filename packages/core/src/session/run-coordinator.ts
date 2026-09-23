@@ -2,6 +2,13 @@ export * as SessionRunCoordinator from "./run-coordinator"
 
 import { Deferred, Effect, Exit, Fiber, FiberSet, Scope } from "effect"
 
+export type InterruptStatus = "interrupted" | "idle"
+
+export type InterruptResult<Key> = {
+  readonly key: Key
+  readonly status: InterruptStatus
+}
+
 /** Serializes execution for each key while allowing different keys to run concurrently. */
 export interface Coordinator<Key, E> {
   /** Snapshots keys with an execution owned by this coordinator. */
@@ -12,6 +19,8 @@ export interface Coordinator<Key, E> {
   readonly wake: (key: Key) => Effect.Effect<void>
   /** Stops active execution and waits for its cleanup. */
   readonly interrupt: (key: Key) => Effect.Effect<void>
+  /** Stops each key independently and reports whether it was active at lookup. */
+  readonly interruptMany: (keys: ReadonlyArray<Key>) => Effect.Effect<ReadonlyArray<InterruptResult<Key>>>
 }
 
 type Entry<E> = {
@@ -91,14 +100,27 @@ export const make = <Key, E>(options: {
         start(key, next, false)
       })
 
-    const interrupt = (key: Key): Effect.Effect<void> =>
-      Effect.suspend(() => {
-        const entry = active.get(key)
-        if (entry?.owner === undefined) return Effect.void
-        entry.stopping = true
-        entry.pendingWake = false
-        return Fiber.interrupt(entry.owner)
-      })
+    const interruptMany = (keys: ReadonlyArray<Key>) =>
+      Effect.uninterruptible(
+        Effect.suspend(() => {
+          const claimed = new Set<Key>()
+          const owners = new Set<Fiber.Fiber<void, never>>()
+          const statuses = keys.map((key) => {
+            const entry = active.get(key)
+            if (entry?.owner === undefined) return { key, status: "idle" } as const
+            if (!claimed.has(key)) {
+              claimed.add(key)
+              entry.stopping = true
+              entry.pendingWake = false
+              owners.add(entry.owner)
+            }
+            return { key, status: "interrupted" } as const
+          })
+          return Fiber.interruptAll(owners).pipe(Effect.as(statuses))
+        }),
+      )
 
-    return { active: Effect.sync(() => new Set(active.keys())), run, wake, interrupt }
+    const interrupt = (key: Key): Effect.Effect<void> => interruptMany([key]).pipe(Effect.asVoid)
+
+    return { active: Effect.sync(() => new Set(active.keys())), run, wake, interrupt, interruptMany }
   })

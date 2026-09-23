@@ -35,6 +35,8 @@ import type {
   SessionsEventsOutput,
   SessionsInterruptInput,
   SessionsInterruptOutput,
+  SessionsInterruptManyInput,
+  SessionsInterruptManyOutput,
   SessionsMessageInput,
   SessionsMessageOutput,
   MessagesListInput,
@@ -481,6 +483,18 @@ export function make(options: ClientOptions) {
           },
           requestOptions,
         ),
+      interruptMany: (input: SessionsInterruptManyInput, requestOptions?: RequestOptions) =>
+        request<{ readonly data: SessionsInterruptManyOutput }>(
+          {
+            method: "POST",
+            path: `/api/session/interrupt`,
+            body: { sessionIDs: input["sessionIDs"] },
+            successStatus: 200,
+            declaredStatuses: [400, 401],
+            empty: false,
+          },
+          requestOptions,
+        ).then((value) => value.data),
       message: (input: SessionsMessageInput, requestOptions?: RequestOptions) =>
         request<{ readonly data: SessionsMessageOutput }>(
           {

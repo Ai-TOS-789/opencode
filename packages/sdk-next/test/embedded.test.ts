@@ -64,6 +64,9 @@ test("embedded client uses the real router and handlers", async () => {
         location: Location.Ref.make({ directory: AbsolutePath.make(directory) }),
       })
       const missingSessionID = Session.ID.make(`ses_missing_${crypto.randomUUID()}`)
+      const batch = yield* opencode.sessions.interruptMany({
+        sessionIDs: [sessionID, other.id, missingSessionID],
+      })
       const missing = yield* Effect.all(
         [
           opencode.sessions.events({ sessionID: missingSessionID }).pipe(Stream.runHead, Effect.flip),
@@ -90,6 +93,11 @@ test("embedded client uses the real router and handlers", async () => {
       expect(context.some((message) => message.type === "model-switched")).toBe(true)
       expect(event).toMatchObject({ type: "session.next.model.switched", durable: { seq: 1 } })
       expect(message).toEqual(modelMessage)
+      expect(batch).toEqual([
+        { sessionID, status: "idle" },
+        { sessionID: other.id, status: "idle" },
+        { sessionID: missingSessionID, status: "not_found" },
+      ])
       expect(missing.map((error) => error._tag)).toEqual([
         "SessionNotFoundError",
         "SessionNotFoundError",

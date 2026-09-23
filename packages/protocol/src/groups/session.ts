@@ -84,6 +84,24 @@ const SessionActive = Schema.Struct({
   type: Schema.Literal("running"),
 }).annotate({ identifier: "SessionActive" })
 
+export const SessionInterruptLimit = 100
+
+export const SessionInterruptStatus = Schema.Literals(["interrupted", "idle", "not_found"]).annotate({
+  identifier: "SessionInterruptStatus",
+})
+
+export const SessionInterruptResult = Schema.Struct({
+  sessionID: Session.ID,
+  status: SessionInterruptStatus,
+}).annotate({ identifier: "SessionInterruptResult" })
+
+export const SessionInterruptInput = Schema.Struct({
+  sessionIDs: Schema.Array(Session.ID).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(SessionInterruptLimit),
+  ),
+}).annotate({ identifier: "SessionInterruptInput" })
+
 const SessionHistoryLimit = PositiveInt.check(Schema.isLessThanOrEqualTo(100))
 
 export const SessionHistoryQuery = Schema.Struct({
@@ -355,6 +373,20 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S>(sessionLo
             description: "Interrupt active execution owned by this OpenCode process. Idle interruption is a no-op.",
           }),
         ),
+    )
+    .add(
+      HttpApiEndpoint.post("session.interruptMany", "/api/session/interrupt", {
+        payload: SessionInterruptInput,
+        success: Schema.Struct({ data: Schema.Array(SessionInterruptResult) }),
+        error: InvalidRequestError,
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "v2.session.interruptMany",
+          summary: "Interrupt multiple sessions",
+          description:
+            "Interrupt up to 100 sessions concurrently. Results are returned in request order; idle means no active execution is owned by this process and not_found means the session does not exist.",
+        }),
+      ),
     )
     .add(
       HttpApiEndpoint.get("session.message", "/api/session/:sessionID/message/:messageID", {
