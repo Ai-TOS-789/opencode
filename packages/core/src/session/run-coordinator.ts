@@ -103,20 +103,23 @@ export const make = <Key, E>(options: {
     const interruptMany = (keys: ReadonlyArray<Key>) =>
       Effect.uninterruptible(
         Effect.suspend(() => {
-          const claimed = new Set<Key>()
           const owners = new Set<Fiber.Fiber<void, never>>()
-          const statuses = keys.map((key) => {
+          const waiters: Array<Effect.Effect<void>> = []
+          const statuses = Array.from(new Set(keys)).map((key) => {
             const entry = active.get(key)
             if (entry?.owner === undefined) return { key, status: "idle" } as const
-            if (!claimed.has(key)) {
-              claimed.add(key)
+            if (entry.stopping) {
+              // A wake registered during cleanup belongs to the next run. Do not clear it
+              // from a second interrupt.
+              waiters.push(Deferred.await(entry.done).pipe(Effect.exit, Effect.asVoid))
+            } else {
               entry.stopping = true
               entry.pendingWake = false
               owners.add(entry.owner)
             }
             return { key, status: "interrupted" } as const
           })
-          return Fiber.interruptAll(owners).pipe(Effect.as(statuses))
+          return Effect.all([Fiber.interruptAll(owners), ...waiters], { discard: true }).pipe(Effect.as(statuses))
         }),
       )
 

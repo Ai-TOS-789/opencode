@@ -417,7 +417,6 @@ describe("SessionRunCoordinator", () => {
           { key: "second", status: "interrupted" },
           { key: "missing", status: "idle" },
           { key: "first", status: "interrupted" },
-          { key: "first", status: "interrupted" },
         ])
         expect(interrupted.toSorted()).toEqual(["first", "second"])
         yield* Effect.all([Fiber.await(first), Fiber.await(second)])
