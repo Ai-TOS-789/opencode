@@ -1,0 +1,338 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+export PATH="/usr/local/bin:/usr/bin:/bin"
+
+root=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
+runtime_root="${XDG_RUNTIME_DIR:-/tmp/opencode}"
+state_root="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}"
+state_dir="$state_root/opencode-learning"
+log_file="$state_dir/learning-cycle.log"
+lock_file="$runtime_root/opencode-learning.lock"
+cycle_prompt="$root/.opencode/learning/cycle-prompt.md"
+state_file="$root/.opencode/learning/state.json"
+learning_check="$root/script/opencode-learning-check"
+expected_branch=${OPENCODE_LEARNING_BRANCH:-}
+expected_opencode_version=${OPENCODE_EXPECTED_VERSION:-2.0.15}
+
+mkdir -p "$state_dir" "$runtime_root"
+
+log() {
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$log_file"
+}
+
+if [[ -f "$log_file" && $(stat -c %s "$log_file") -ge 1048576 ]]; then
+  mv -f "$log_file" "$log_file.1"
+fi
+
+if [[ -z "$expected_branch" ]]; then
+  log "error: OPENCODE_LEARNING_BRANCH is required"
+  exit 2
+fi
+if [[ ! -f "$cycle_prompt" || ! -f "$state_file" || ! -f "$learning_check" ]]; then
+  log "error: learning policy, state, or deterministic checker is missing"
+  exit 1
+fi
+if [[ -e "$root/.opencode/learning/PAUSE" ]]; then
+  log "skipped: PAUSE exists"
+  exit 0
+fi
+
+exec 9>"$lock_file"
+if ! flock -n 9; then
+  log "skipped: another learning cycle holds the lock"
+  exit 0
+fi
+
+if ! branch=$(git -C "$root" symbolic-ref --quiet --short HEAD); then
+  log "skipped: detached HEAD"
+  exit 0
+fi
+if [[ "$branch" != "$expected_branch" ]]; then
+  log "skipped: branch $branch does not match required branch $expected_branch"
+  exit 0
+fi
+if [[ -n "$(git -C "$root" status --porcelain=v1 --untracked-files=all)" ]]; then
+  log "skipped: worktree is not clean on $branch"
+  exit 0
+fi
+
+source_head=$(git -C "$root" log -1 --format=%H -- . ':(exclude).opencode/learning/**')
+if [[ -z "$source_head" ]]; then
+  source_head=$(git -C "$root" rev-parse HEAD)
+fi
+if [[ ! "$source_head" =~ ^[0-9a-f]{40}$ ]]; then
+  log "error: unable to resolve a full non-learning source commit"
+  exit 1
+fi
+
+last_observed=$(sed -nE 's/^[[:space:]]*"last_observed_commit"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$state_file")
+if [[ "$source_head" == "$last_observed" ]]; then
+  log "skipped: no new non-learning source after $source_head"
+  exit 0
+fi
+
+python3 "$learning_check" validate >>"$log_file" 2>&1 || {
+  log "error: current learning records failed deterministic validation"
+  exit 1
+}
+
+opencode_bin=${OPENCODE_BIN:-}
+if [[ -z "$opencode_bin" ]]; then
+  for candidate in "${HOME:-}/.opencode/bin/opencode" "${HOME:-}/.local/bin/opencode" /usr/local/bin/opencode; do
+    if [[ -x "$candidate" ]]; then
+      opencode_bin=$candidate
+      break
+    fi
+  done
+fi
+if [[ -z "$opencode_bin" ]]; then
+  opencode_bin=$(command -v opencode || true)
+fi
+if [[ -z "$opencode_bin" || ! -x "$opencode_bin" ]]; then
+  log "error: opencode executable not found; set OPENCODE_BIN"
+  exit 127
+fi
+opencode_version=$("$opencode_bin" --version)
+if [[ "$opencode_version" != "opencode v$expected_opencode_version" ]]; then
+  log "error: expected opencode v$expected_opencode_version, found $opencode_version"
+  exit 1
+fi
+
+range_start=""
+range_complete=true
+if [[ "$last_observed" =~ ^[0-9a-f]{40}$ ]] && git -C "$root" cat-file -e "$last_observed^{commit}" 2>/dev/null; then
+  if git -C "$root" merge-base --is-ancestor "$last_observed" "$source_head"; then
+    range_start=$last_observed
+  else
+    range_complete=false
+  fi
+else
+  range_complete=false
+fi
+
+evidence_file="$runtime_root/opencode-learning-evidence.$$.md"
+state_backup=""
+state_stamped=0
+commit_succeeded=0
+cleanup() {
+  rc=$?
+  trap - EXIT
+  rm -f "$evidence_file"
+  if [[ -n "$state_backup" && -f "$state_backup" ]]; then
+    if [[ $state_stamped -eq 1 && $commit_succeeded -ne 1 ]]; then
+      cp -p "$state_backup" "$state_file"
+    fi
+    rm -f "$state_backup"
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+{
+  printf '# Scheduled learning evidence\n\n'
+  printf -- '- Branch: `%s`\n' "$branch"
+  printf -- '- Source commit: `%s`\n' "$source_head"
+  printf -- '- Previous observed commit: `%s`\n' "${last_observed:-none}"
+  printf -- '- Range complete: `%s`\n' "$range_complete"
+  if [[ -n "$range_start" ]]; then
+    printf -- '- Commit count in range: `%s`\n' "$(git -C "$root" rev-list --count "$range_start..$source_head")"
+    printf '\n## Recent non-learning commits (maximum 30)\n\n'
+    git -C "$root" log --max-count=30 --format='- `%H` %ad %s' --date=short "$range_start..$source_head" -- . ':(exclude).opencode/learning/**'
+    printf '\n## Changed paths\n\n'
+    git -C "$root" diff --name-status --find-renames "$range_start..$source_head" -- . ':(exclude).opencode/learning/**'
+    printf '\n## Diff stat\n\n'
+    git -C "$root" diff --stat "$range_start..$source_head" -- . ':(exclude).opencode/learning/**'
+  else
+    printf -- '- Commit count in range: `unavailable; using latest 30`\n'
+    printf '\n## Recent non-learning commits (maximum 30)\n\n'
+    git -C "$root" log --max-count=30 --format='- `%H` %ad %s' --date=short -- . ':(exclude).opencode/learning/**'
+    printf '\n## Note\n\n'
+    printf '%s\n' 'The previous state was missing or not an ancestor. Evidence is intentionally bounded to the latest 30 non-learning commits.'
+  fi
+} >"$evidence_file"
+chmod 600 "$evidence_file"
+
+started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+args=(
+  run
+  --standalone
+  --agent
+  learning-observer
+  --format
+  default
+  --title
+  "Learning cycle $started_at"
+)
+if [[ -n "${OPENCODE_LEARNING_MODEL:-}" ]]; then
+  args+=(--model "$OPENCODE_LEARNING_MODEL")
+fi
+args+=(
+  --file
+  "$cycle_prompt"
+  --file
+  "$evidence_file"
+  "Execute exactly one unattended learning cycle using the attached operating prompt and evidence. Do not ask questions or implement product changes."
+)
+
+debug_file=${OPENCODE_LEARNING_DEBUG_FILE:-}
+if [[ -n "$debug_file" ]]; then
+  case "$debug_file" in
+    "$root"/*)
+      log "error: OPENCODE_LEARNING_DEBUG_FILE must be outside the repository"
+      exit 1
+      ;;
+  esac
+  if [[ ! -d "$(dirname "$debug_file")" ]]; then
+    log "error: debug log parent directory does not exist"
+    exit 1
+  fi
+  : >"$debug_file"
+  chmod 600 "$debug_file"
+  output_target=("$debug_file")
+else
+  output_target=(/dev/null)
+fi
+
+log "started: branch=$branch source=$source_head previous=${last_observed:-none} opencode=$opencode_version"
+set +e
+"$opencode_bin" "${args[@]}" >"${output_target[0]}" 2>&1
+opencode_status=$?
+set -e
+if [[ $opencode_status -ne 0 ]]; then
+  log "error: opencode run exited with status $opencode_status"
+  exit "$opencode_status"
+fi
+
+model_changes=$(git -C "$root" status --porcelain=v1 --untracked-files=all)
+declare -a new_proposals=()
+declare -a new_journal=()
+unexpected=0
+if [[ -n "$model_changes" ]]; then
+  while IFS= read -r change; do
+    code=${change:0:2}
+    path=${change:3}
+    if [[ "$code" != "??" ]]; then
+      unexpected=1
+      continue
+    fi
+    case "$path" in
+      .opencode/learning/proposals/*.md)
+        if [[ "$(basename "$path")" == "README.md" || "$(basename "$path")" == "TEMPLATE.md" ]]; then
+          unexpected=1
+        else
+          new_proposals+=("$path")
+        fi
+        ;;
+      .opencode/learning/journal/*.md)
+        if [[ "$(basename "$path")" == "README.md" ]]; then
+          unexpected=1
+        else
+          new_journal+=("$path")
+        fi
+        ;;
+      *)
+        unexpected=1
+        ;;
+    esac
+  done <<<"$model_changes"
+fi
+
+if [[ $unexpected -ne 0 ]]; then
+  log "error: observer modified tracked or non-journal learning files; no state update or commit created"
+  exit 1
+fi
+
+if [[ ${#new_proposals[@]} -gt 3 ]]; then
+  log "error: observer created ${#new_proposals[@]} proposals; maximum is 3"
+  exit 1
+fi
+if [[ ${#new_journal[@]} -ne 1 ]]; then
+  log "error: observer created ${#new_journal[@]} journal files; exactly 1 is required"
+  exit 1
+fi
+
+outcome=no-op
+if [[ ${#new_proposals[@]} -gt 0 ]]; then
+  outcome=proposals
+fi
+
+check_args=(validate --source "$source_head" --outcome "$outcome" --pre-stamp --enforce-output)
+for path in "${new_proposals[@]}"; do
+  check_args+=(--new-proposal "$path")
+done
+for path in "${new_journal[@]}"; do
+  check_args+=(--new-journal "$path")
+done
+python3 "$learning_check" "${check_args[@]}" >>"$log_file" 2>&1 || {
+  log "error: observer output failed deterministic validation; no state update or commit created"
+  exit 1
+}
+
+state_backup="$runtime_root/opencode-learning-state.$$.json"
+cp -p "$state_file" "$state_backup"
+state_stamped=1
+python3 "$learning_check" stamp --source "$source_head" --outcome "$outcome" >>"$log_file" 2>&1
+
+check_args=(validate --source "$source_head" --outcome "$outcome" --enforce-output)
+for path in "${new_proposals[@]}"; do
+  check_args+=(--new-proposal "$path")
+done
+for path in "${new_journal[@]}"; do
+  check_args+=(--new-journal "$path")
+done
+python3 "$learning_check" "${check_args[@]}" >>"$log_file" 2>&1 || {
+  log "error: stamped learning state failed deterministic validation; state restored and no commit created"
+  exit 1
+}
+
+declare -A expected_paths=([".opencode/learning/state.json"]=1)
+for path in "${new_proposals[@]}"; do
+  expected_paths["$path"]=1
+done
+for path in "${new_journal[@]}"; do
+  expected_paths["$path"]=1
+done
+
+final_changes=$(git -C "$root" status --porcelain=v1 --untracked-files=all)
+unexpected=0
+while IFS= read -r change; do
+  code=${change:0:2}
+  path=${change:3}
+  if [[ "$path" == ".opencode/learning/state.json" && "$code" == " M" ]]; then
+    continue
+  fi
+  if [[ "$code" == "??" && -n "${expected_paths[$path]:-}" ]]; then
+    continue
+  fi
+  unexpected=1
+done <<<"$final_changes"
+if [[ $unexpected -ne 0 ]]; then
+  log "error: final worktree differs from the validated learning allowlist; no commit created"
+  exit 1
+fi
+
+git -C "$root" add -- .opencode/learning/state.json "${new_proposals[@]}" "${new_journal[@]}"
+if ! git -C "$root" diff --cached --check; then
+  git -C "$root" reset --quiet
+  log "error: learning changes failed git diff --cached --check; no commit created"
+  exit 1
+fi
+
+set +e
+git -C "$root" \
+  -c user.name="OpenCode Learning" \
+  -c user.email="opencode-learning@localhost" \
+  commit -m "chore(learning): record evidence cycle" -- \
+  .opencode/learning/state.json \
+  "${new_proposals[@]}" \
+  "${new_journal[@]}" >>"$log_file" 2>&1
+commit_status=$?
+set -e
+if [[ $commit_status -ne 0 ]]; then
+  git -C "$root" reset --quiet || true
+  log "error: bounded learning audit commit failed with status $commit_status"
+  exit "$commit_status"
+fi
+commit_succeeded=1
+
+log "completed: committed bounded learning evidence for source $source_head on $branch"

@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""Validate and deterministically stamp the local OpenCode learning state."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+LEARNING = ROOT / ".opencode" / "learning"
+PROPOSALS = LEARNING / "proposals"
+JOURNAL = LEARNING / "journal"
+STATE = LEARNING / "state.json"
+
+PROPOSAL_STATUSES = {
+    "proposed",
+    "approved",
+    "implementing",
+    "awaiting-review",
+    "changes-requested",
+    "adopted",
+    "rejected",
+}
+RISKS = {"low", "medium", "high"}
+OUTCOMES = {"proposals", "no-op"}
+STATE_OUTCOMES = {"initialized", *OUTCOMES}
+ID_PATTERN = re.compile(r"^LRN-\d{8}-\d{3}$")
+COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+REQUIRED_PROPOSAL_KEYS = {
+    "id",
+    "title",
+    "status",
+    "risk",
+    "created_at",
+    "created_by",
+    "source_commit",
+    "owner_decision",
+    "review_verdict",
+}
+REQUIRED_HEADINGS = (
+    "## Evidence",
+    "## Why this matters",
+    "## Hypothesis",
+    "## Scope",
+    "## Risk and safeguards",
+    "## Validation",
+    "## Implementation record",
+    "## Review",
+    "## Owner decision",
+)
+SECRET_PATTERNS = (
+    re.compile(r"\b(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    re.compile(r"(?i)\bauthorization\s*:\s*bearer\s+[A-Za-z0-9._-]{16,}"),
+)
+
+
+class ValidationError(Exception):
+    pass
+
+
+def relative(path: Path) -> str:
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def parse_frontmatter(path: Path) -> tuple[dict[str, str], str]:
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        raise ValidationError(f"{relative(path)} is missing frontmatter")
+    parts = text.split("\n---\n", 1)
+    if len(parts) != 2:
+        raise ValidationError(f"{relative(path)} has an unterminated frontmatter block")
+    values: dict[str, str] = {}
+    for line in parts[0].removeprefix("---\n").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values, parts[1]
+
+
+def load_state() -> dict[str, object]:
+    try:
+        value = json.loads(STATE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValidationError(f"cannot read {relative(STATE)}: {error}") from error
+    if not isinstance(value, dict):
+        raise ValidationError(f"{relative(STATE)} must contain a JSON object")
+    return value
+
+
+def validate_state(source: str | None, outcome: str | None, pre_stamp: bool = False) -> dict[str, object]:
+    state = load_state()
+    if state.get("schema_version") != 1:
+        raise ValidationError("state schema_version must be 1")
+    observed = state.get("last_observed_commit")
+    if not isinstance(observed, str) or not COMMIT_PATTERN.fullmatch(observed):
+        raise ValidationError("state last_observed_commit must be a full Git commit SHA")
+    if not pre_stamp and source is not None and observed != source:
+        raise ValidationError(f"state last_observed_commit is {observed}, expected {source}")
+    count = state.get("cycle_count")
+    if not isinstance(count, int) or count < 0:
+        raise ValidationError("state cycle_count must be a non-negative integer")
+    recorded_outcome = state.get("last_outcome")
+    if recorded_outcome not in STATE_OUTCOMES:
+        raise ValidationError("state last_outcome must be proposals or no-op")
+    if not pre_stamp and outcome is not None and recorded_outcome != outcome:
+        raise ValidationError(f"state last_outcome is {recorded_outcome}, expected {outcome}")
+    return state
+
+
+def validate_proposal(path: Path, expected_source: str | None, require_new: bool) -> str:
+    values, body = parse_frontmatter(path)
+    missing = REQUIRED_PROPOSAL_KEYS - values.keys()
+    if missing:
+        raise ValidationError(f"{relative(path)} is missing fields: {', '.join(sorted(missing))}")
+    if not ID_PATTERN.fullmatch(values["id"]):
+        raise ValidationError(f"{relative(path)} has invalid id {values['id']!r}")
+    if values["status"] not in PROPOSAL_STATUSES:
+        raise ValidationError(f"{relative(path)} has invalid status {values['status']!r}")
+    if values["risk"] not in RISKS:
+        raise ValidationError(f"{relative(path)} has invalid risk {values['risk']!r}")
+    if not COMMIT_PATTERN.fullmatch(values["source_commit"]):
+        raise ValidationError(f"{relative(path)} source_commit must be a full Git commit SHA")
+    for heading in REQUIRED_HEADINGS:
+        if heading not in body:
+            raise ValidationError(f"{relative(path)} is missing heading {heading}")
+    if require_new:
+        if expected_source is None:
+            raise ValidationError("new proposals require an expected source commit")
+        if values["status"] != "proposed":
+            raise ValidationError(f"new proposal {relative(path)} must have status proposed")
+        if values["owner_decision"] != "pending":
+            raise ValidationError(f"new proposal {relative(path)} must have owner_decision pending")
+        if values["review_verdict"] != "pending":
+            raise ValidationError(f"new proposal {relative(path)} must have review_verdict pending")
+        if values["source_commit"] != expected_source:
+            raise ValidationError(f"new proposal {relative(path)} cites the wrong source commit")
+    return values["id"]
+
+
+def validate_no_symlinks() -> None:
+    symlink = next((path for path in LEARNING.rglob("*") if path.is_symlink()), None)
+    if symlink is not None:
+        raise ValidationError(f"symlink is not allowed in learning area: {relative(symlink)}")
+
+
+def validate_secret_scan() -> None:
+    for path in LEARNING.rglob("*"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raise ValidationError(f"learning file is not UTF-8 text: {relative(path)}") from None
+        for pattern in SECRET_PATTERNS:
+            if pattern.search(text):
+                raise ValidationError(f"possible secret detected in {relative(path)}")
+
+
+def stamp(source: str, outcome: str) -> None:
+    if not COMMIT_PATTERN.fullmatch(source):
+        raise ValidationError("source must be a full Git commit SHA")
+    if outcome not in OUTCOMES:
+        raise ValidationError("outcome must be proposals or no-op")
+    state = load_state()
+    if state.get("schema_version") != 1:
+        raise ValidationError("state schema_version must be 1")
+    count = state.get("cycle_count")
+    if not isinstance(count, int) or count < 0:
+        raise ValidationError("state cycle_count must be a non-negative integer")
+    updated = {
+        "schema_version": 1,
+        "last_observed_commit": source,
+        "last_observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "cycle_count": count + 1,
+        "last_outcome": outcome,
+    }
+    temporary = STATE.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, STATE)
+
+
+def validate(
+    source: str | None,
+    outcome: str | None,
+    new_proposals: list[str],
+    new_journal: list[str],
+    pre_stamp: bool = False,
+    enforce_output: bool = False,
+) -> dict[str, object]:
+    validate_no_symlinks()
+    validate_secret_scan()
+    state = validate_state(source, outcome, pre_stamp)
+    if enforce_output:
+        if len(new_proposals) > 3:
+            raise ValidationError(f"cycle created {len(new_proposals)} proposals; maximum is 3")
+        if len(new_journal) != 1:
+            raise ValidationError(f"cycle created {len(new_journal)} journal files; exactly 1 is required")
+    ids: set[str] = set()
+    new_proposal_set = {relative((ROOT / value).resolve()) for value in new_proposals}
+    for path in sorted(PROPOSALS.glob("*.md")):
+        if path.name in {"README.md", "TEMPLATE.md"}:
+            continue
+        proposal_id = validate_proposal(path, source, relative(path.resolve()) in new_proposal_set)
+        if proposal_id in ids:
+            raise ValidationError(f"duplicate proposal id: {proposal_id}")
+        ids.add(proposal_id)
+    for value in new_journal:
+        path = (ROOT / value).resolve()
+        path_relative = relative(path)
+        if path.parent != JOURNAL or path.suffix != ".md" or path.name == "README.md":
+            raise ValidationError(f"new journal path is not allowed: {path_relative}")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise ValidationError(f"cannot read new journal {path_relative}: {error}") from error
+        if source is not None and source not in text:
+            raise ValidationError(f"new journal {path_relative} does not cite source commit {source}")
+        if not text.lstrip().startswith("#"):
+            raise ValidationError(f"new journal {path_relative} must start with a Markdown heading")
+    return {"proposals": len(ids), "journal_files": len(list(JOURNAL.glob("*.md"))), "state": state}
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(description=__doc__)
+    subparsers = root.add_subparsers(dest="command", required=True)
+    stamp_parser = subparsers.add_parser("stamp")
+    stamp_parser.add_argument("--source", required=True)
+    stamp_parser.add_argument("--outcome", required=True, choices=sorted(OUTCOMES))
+    validate_parser = subparsers.add_parser("validate")
+    validate_parser.add_argument("--source")
+    validate_parser.add_argument("--outcome", choices=sorted(OUTCOMES))
+    validate_parser.add_argument("--new-proposal", action="append", default=[])
+    validate_parser.add_argument("--new-journal", action="append", default=[])
+    validate_parser.add_argument("--pre-stamp", action="store_true")
+    validate_parser.add_argument("--enforce-output", action="store_true")
+    return root
+
+
+def main() -> int:
+    args = parser().parse_args()
+    try:
+        if args.command == "stamp":
+            stamp(args.source, args.outcome)
+            result = validate_state(args.source, args.outcome)
+        else:
+            result = validate(
+                args.source,
+                args.outcome,
+                args.new_proposal,
+                args.new_journal,
+                args.pre_stamp,
+                args.enforce_output,
+            )
+    except ValidationError as error:
+        print(f"learning validation failed: {error}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
