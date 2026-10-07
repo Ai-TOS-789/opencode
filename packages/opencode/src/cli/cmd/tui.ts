@@ -13,6 +13,7 @@ import type { EventSource } from "@opencode-ai/tui/context/sdk"
 import { writeHeapSnapshot } from "v8"
 import { ServerAuth } from "@/server/auth"
 import { validateSession } from "../tui/validate-session"
+import { TuiReload } from "../tui/reload"
 import { win32InstallCtrlCGuard } from "@opencode-ai/tui/terminal-win32"
 
 declare global {
@@ -138,6 +139,15 @@ export const TuiThreadCommand = cmd({
         describe: "cap visible mini replay to the newest N messages",
       })
       .option("demo", {
+        type: "boolean",
+        hidden: true,
+      })
+      .option("reload", {
+        type: "boolean",
+        default: true,
+        describe: "reopen the TUI after an unexpected failure instead of dropping to the shell",
+      })
+      .option("no-reload", {
         type: "boolean",
         hidden: true,
       }),
@@ -270,7 +280,9 @@ export const TuiThreadCommand = cmd({
         const { Effect } = await import("effect")
         const { run } = await import("../tui/layer")
         const { createLegacyTuiPluginHost } = await import("@/plugin/tui/runtime")
-        await Effect.runPromise(
+        // Each attempt gets a fresh plugin host: the previous one is disposed when
+        // its scope closes, so a reopened TUI must not inherit crashed state.
+        const start = () =>
           run({
             url: transport.url,
             async onSnapshot() {
@@ -293,8 +305,36 @@ export const TuiThreadCommand = cmd({
               fork: args.fork,
               auto: args.auto || args.yolo || args["dangerously-skip-permissions"],
             },
-          }),
-        )
+          })
+        const policy = args.reload === false || args.noReload === true ? undefined : TuiReload.defaultPolicy
+        let attempt = 0
+        for (;;) {
+          const started = Date.now()
+          const outcome = await Effect.runPromise(start()).then(
+            (result) => ({ resolved: true as const, reason: result.reason, error: undefined as unknown }),
+            (error: unknown) => ({ resolved: false as const, reason: undefined as unknown, error }),
+          )
+          const decision = TuiReload.decide(
+            { resolved: outcome.resolved, reason: outcome.reason, elapsedMs: Date.now() - started },
+            attempt,
+            policy,
+          )
+          if (!decision.reload) {
+            // An uncaught TUI failure keeps its original reporting path; a clean
+            // error exit already set a non-zero code when the app stopped itself.
+            if (!outcome.resolved) throw outcome.error
+            break
+          }
+          attempt = decision.attempt
+          // The attempt that just died may have set a non-zero exit code; reopening
+          // earns a clean slate until the new attempt fails on its own.
+          process.exitCode = undefined
+          UI.println(
+            `TUI stopped unexpectedly — reopening (attempt ${attempt}/${policy?.maxAttempts ?? 0}). Use --no-reload to disable.`,
+          )
+          await withTimeout(client.call("reload", undefined), 5000).catch(() => {})
+          await TuiReload.wait(decision.delayMs)
+        }
       } finally {
         await stop()
       }

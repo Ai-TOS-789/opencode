@@ -362,6 +362,9 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
     }
     if (result.epilogue) process.stdout.write(result.epilogue + "\n")
   })
+  // The exit reason is also returned so a supervising CLI can tell an error exit
+  // from a clean quit without re-reading process state.
+  return { epilogue: result.epilogue, reason: result.reason }
 })
 
 function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPluginHost }) {

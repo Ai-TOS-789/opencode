@@ -63,6 +63,18 @@ describe("tui thread", () => {
     }
   })
 
+  test("reopens the TUI by default and honors --no-reload", async () => {
+    const parse = (argv: string[]) =>
+      yargs([]).command({ ...TuiThreadCommand, handler: () => {} }).exitProcess(false).parse(argv)
+
+    expect((await parse([])).reload).toBe(true)
+
+    for (const option of ["--no-reload", "--no-reload=true", "--noReload"]) {
+      const args = await parse([option])
+      expect(args.reload === false || args.noReload === true).toBe(true)
+    }
+  })
+
   test("preserves boolean negation for existing options", async () => {
     const args = await yargs([])
       .command({ ...TuiThreadCommand, handler: () => {} })
