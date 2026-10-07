@@ -3,6 +3,7 @@ export * as SkillTool from "./skill"
 import path from "path"
 import { ToolFailure } from "@opencode-ai/llm"
 import { Effect, Layer, Schema } from "effect"
+import { AgentFullSkills } from "../agent-full-skills"
 import { makeLocationNode } from "../effect/app-node"
 import { FSUtil } from "../fs-util"
 import { SkillV2 } from "../skill"
@@ -60,6 +61,7 @@ const layer = Layer.effectDiscard(
     const fs = yield* FSUtil.Service
     const skills = yield* SkillV2.Service
     const permission = yield* PermissionV2.Service
+    const fullSkills = yield* AgentFullSkills.Service
     yield* tools
       .register({
         [name]: Tool.make({
@@ -70,7 +72,9 @@ const layer = Layer.effectDiscard(
           execute: (input, context) =>
             Effect.gen(function* () {
               const current = yield* skills.list()
-              const skill = current.find((skill) => skill.name === input.name)
+              const exact = current.find((candidate) => candidate.name === input.name)
+              const routed = exact === undefined ? yield* fullSkills.resolve(input.name) : undefined
+              const skill = exact ?? current.find((candidate) => candidate.name === routed?.name)
               if (!skill) return yield* unableToLoad(input.name)
               return yield* Effect.gen(function* () {
                 yield* permission.assert({
@@ -89,10 +93,11 @@ const layer = Layer.effectDiscard(
                         .toSorted()
                         .slice(0, FILE_LIMIT)
                     : []
+                const loaded = toModelOutput(skill, files)
                 return {
                   name: skill.name,
                   directory,
-                  output: toModelOutput(skill, files),
+                  output: exact === undefined ? `Routed ${input.name} to skill ${skill.name}.\n\n${loaded}` : loaded,
                 }
               }).pipe(Effect.mapError((error) => unableToLoad(input.name, error)))
             }),
@@ -105,5 +110,5 @@ const layer = Layer.effectDiscard(
 export const node = makeLocationNode({
   name: "tool/skill",
   layer,
-  deps: [ToolRegistry.node, FSUtil.node, SkillV2.node, PermissionV2.node],
+  deps: [ToolRegistry.node, FSUtil.node, SkillV2.node, PermissionV2.node, AgentFullSkills.node],
 })

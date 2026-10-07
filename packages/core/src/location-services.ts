@@ -1,5 +1,10 @@
 import { Effect, Layer, LayerMap } from "effect"
 import { AgentV2 } from "./agent"
+import { AgentFullSkills } from "./agent-full-skills"
+import { Planner } from "./agent-full-skills/planner"
+import { ResilienceManager } from "./agent-full-skills/resilience"
+import { SkillRegistry } from "./agent-full-skills/registry"
+import { SkillRouter } from "./agent-full-skills/router"
 import { AISDK } from "./aisdk"
 import { Catalog } from "./catalog"
 import { CommandV2 } from "./command"
@@ -68,6 +73,11 @@ export const locationServices = LayerNode.group([
   ToolRegistry.toolsNode,
   Image.node,
   SkillGuidance.node,
+  SkillRegistry.node,
+  SkillRouter.node,
+  Planner.node,
+  ResilienceManager.node,
+  AgentFullSkills.node,
   ReferenceGuidance.node,
   SessionTodo.node,
   QuestionV2.node,
