@@ -1990,8 +1990,10 @@ const layer = Layer.effect(
         return undefined
       }
 
+      // The opencode lineup rotates, so a single hardcoded family goes stale and
+      // silently sends background work to the session's main model instead.
       const priority = providerID.startsWith("opencode")
-        ? ["gpt-nano"]
+        ? ["gpt-nano", "mimo-flash", "mimo"]
         : providerID.startsWith("github-copilot")
           ? ["gpt-mini", ...smallModelFamilyPriority]
           : smallModelFamilyPriority
@@ -2001,7 +2003,10 @@ const layer = Layer.effect(
         [(model) => model.id, "desc"],
       )
       for (const family of priority) {
-        const candidates = models.filter((model) => model.family === family)
+        // Family naming differs per catalog source ("mimo" vs "mimo-flash-free").
+        const candidates = models.filter(
+          (model) => model.family === family || model.family?.startsWith(`${family}-`),
+        )
         if (providerID === ProviderV2.ID.amazonBedrock) {
           const crossRegionPrefixes = ["global.", "us.", "eu."]
 
@@ -2066,8 +2071,10 @@ const layer = Layer.effect(
   }),
 )
 
-const priority = ["gpt-5", "claude-sonnet-4", "big-pickle", "gemini-3-pro"]
-const smallModelFamilyPriority = ["gemini-flash", "gpt-nano", "claude-haiku"]
+// Ranked highest-wins-last: sort() orders on findIndex descending, so entries
+// later in this list outrank earlier ones and unmatched models (-1) sink down.
+const priority = ["gpt-5", "claude-sonnet-4", "big-pickle", "gemini-3-pro", "mimo"]
+const smallModelFamilyPriority = ["gemini-flash", "gpt-nano", "claude-haiku", "mimo"]
 export function sort<T extends { id: string }>(models: T[]) {
   return sortBy(
     models,

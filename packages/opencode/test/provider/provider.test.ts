@@ -357,6 +357,31 @@ it.instance("defaultModel returns first available model when no config set", () 
 )
 
 it.instance(
+  "defaultModel prefers MiMo when nothing is configured",
+  Effect.gen(function* () {
+    const model = yield* Provider.use.defaultModel()
+    expect(String(model.providerID)).toBe("opencode-test")
+    expect(String(model.modelID)).toBe("mimo-v2.6-flash-free")
+  }),
+  {
+    config: {
+      provider: {
+        "opencode-test": {
+          name: "OpenCode Test",
+          npm: "@ai-sdk/openai-compatible",
+          models: {
+            "big-pickle": { family: "big-pickle" },
+            "gpt-5-turbo": { family: "gpt" },
+            "mimo-v2.6-flash-free": { family: "mimo" },
+          },
+          options: { apiKey: "test-key" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
   "defaultModel respects config model setting",
   Effect.gen(function* () {
     yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
@@ -723,6 +748,76 @@ it.instance("getSmallModel prefers Gemini for Google Vertex", () =>
 )
 
 it.instance(
+  "getSmallModel picks MiMo when the opencode lineup has no gpt-nano",
+  Effect.gen(function* () {
+    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("opencode-test"))
+    expect(model?.id).toBe(ModelV2.ID.make("mimo-v2.6-flash-free"))
+  }),
+  {
+    config: {
+      provider: {
+        "opencode-test": {
+          name: "OpenCode Test",
+          npm: "@ai-sdk/openai-compatible",
+          models: {
+            "big-pickle": { family: "big-pickle", release_date: "2026-09-01" },
+            "mimo-v2.5": { family: "mimo", release_date: "2026-05-01" },
+            "mimo-v2.6-flash-free": { family: "mimo", release_date: "2026-09-21" },
+          },
+          options: { apiKey: "test-key" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "getSmallModel prefers the MiMo flash family when models.dev suffixes it",
+  Effect.gen(function* () {
+    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("opencode-test"))
+    expect(model?.id).toBe(ModelV2.ID.make("mimo-v2-flash-free"))
+  }),
+  {
+    config: {
+      provider: {
+        "opencode-test": {
+          name: "OpenCode Test",
+          npm: "@ai-sdk/openai-compatible",
+          models: {
+            "mimo-v2-pro-free": { family: "mimo-pro-free", release_date: "2026-09-21" },
+            "mimo-v2-flash-free": { family: "mimo-flash-free", release_date: "2026-09-01" },
+          },
+          options: { apiKey: "test-key" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "getSmallModel still prefers gpt-nano over MiMo when both are present",
+  Effect.gen(function* () {
+    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("opencode-test"))
+    expect(model?.id).toBe(ModelV2.ID.make("gpt-nano"))
+  }),
+  {
+    config: {
+      provider: {
+        "opencode-test": {
+          name: "OpenCode Test",
+          npm: "@ai-sdk/openai-compatible",
+          models: {
+            "gpt-nano": { family: "gpt-nano", release_date: "2025-01-01" },
+            "mimo-v2.6-flash-free": { family: "mimo", release_date: "2026-09-21" },
+          },
+          options: { apiKey: "test-key" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
   "getSmallModel selects the latest model in the preferred family",
   Effect.gen(function* () {
     const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("test-provider"))
@@ -844,6 +939,18 @@ test("provider.sort prioritizes preferred models", () => {
   expect(sorted[0].id).toContain("latest")
   expect(sorted[sorted.length - 1].id).not.toContain("gpt-5")
   expect(sorted[sorted.length - 1].id).not.toContain("sonnet-4")
+})
+
+test("provider.sort ranks MiMo as the top default", () => {
+  const models = [
+    { id: "random-model", name: "Random" },
+    { id: "gpt-5-turbo", name: "GPT-5 Turbo" },
+    { id: "big-pickle", name: "Big Pickle" },
+    { id: "mimo-v2.6-flash-free", name: "MiMo V2.6 Flash" },
+  ] as any[]
+
+  const sorted = Provider.sort(models)
+  expect(sorted[0].id).toBe("mimo-v2.6-flash-free")
 })
 
 it.instance(
