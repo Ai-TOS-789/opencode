@@ -375,6 +375,35 @@ describe("SessionRunnerModel", () => {
     }),
   )
 
+  it.effect("routes a custom AI SDK package over the chat route using its catalog URL", () =>
+    Effect.gen(function* () {
+      const resolved = yield* SessionRunnerModel.fromCatalogModel(
+        model({
+          type: "aisdk",
+          package: "merge-gateway-ai-sdk-provider",
+          url: "https://api-gateway.merge.dev/v1/ai-sdk",
+        }),
+      )
+
+      expect(resolved.route).toMatchObject({
+        id: "openai-compatible-chat",
+        endpoint: { baseURL: "https://api-gateway.merge.dev/v1/ai-sdk", path: "/chat/completions" },
+      })
+    }),
+  )
+
+  it.effect("requires a catalog URL for custom packages without a family profile", () =>
+    Effect.sync(() => {
+      expect(
+        SessionRunnerModel.supported(
+          model({ type: "aisdk", package: "merge-gateway-ai-sdk-provider", url: "https://api-gateway.merge.dev/v1/ai-sdk" }),
+        ),
+      ).toBe(true)
+      expect(SessionRunnerModel.supported(model({ type: "aisdk", package: "merge-gateway-ai-sdk-provider" }))).toBe(false)
+      expect(SessionRunnerModel.supported(model({ type: "aisdk", package: "venice-ai-sdk-provider" }))).toBe(false)
+    }),
+  )
+
   it.effect("reports whether a catalog model has a supported native route", () =>
     Effect.sync(() => {
       expect(

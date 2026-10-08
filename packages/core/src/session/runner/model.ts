@@ -90,15 +90,24 @@ const apiKey = (model: ModelV2.Info, credential?: Credential.Value) => {
 
 const AI_SDK_PREFIX = "@ai-sdk/"
 const OPENROUTER_PACKAGE = "@openrouter/ai-sdk-provider"
+// Custom AI SDK bindings whose HTTP API still speaks OpenAI chat. merge-gateway documents
+// `@ai-sdk/openai` against its `/v1/ai-sdk` base URL, so the catalog URL is an
+// OpenAI-compatible root and the family lookup below does not apply to it.
+const COMPATIBLE_PACKAGES = new Set(["merge-gateway-ai-sdk-provider"])
 
-/** Maps an AI SDK package onto its OpenAI-compatible family profile, if it has one. */
-const compatibleProfile = (pkg: string) => {
+/** Resolves the OpenAI-compatible base URL for an AI SDK package, if it has one. */
+const compatibleBaseURL = (model: ModelV2.Info) => {
+  if (model.api.type !== "aisdk") return undefined
+  const pkg = model.api.package
   const family = pkg.startsWith(AI_SDK_PREFIX)
     ? pkg.slice(AI_SDK_PREFIX.length)
     : pkg === OPENROUTER_PACKAGE
       ? "openrouter"
       : undefined
-  return family === undefined ? undefined : byProvider[family]
+  const profile = family === undefined ? undefined : byProvider[family]
+  if (profile) return model.api.url ?? profile.baseURL
+  if (COMPATIBLE_PACKAGES.has(pkg)) return model.api.url
+  return undefined
 }
 
 const withDefaults = (model: ModelV2.Info, route: AnyRoute, baseURL = model.api.url) => {
@@ -175,10 +184,10 @@ export const fromCatalogModel = (
     )
   }
   if (resolved.api.type === "aisdk") {
-    const profile = compatibleProfile(resolved.api.package)
-    if (profile) {
+    const baseURL = compatibleBaseURL(resolved)
+    if (baseURL !== undefined) {
       return Effect.succeed(
-        withDefaults(resolved, OpenAICompatibleChat.route, resolved.api.url ?? profile.baseURL)
+        withDefaults(resolved, OpenAICompatibleChat.route, baseURL)
           .with({ auth: key === undefined ? Auth.none : Auth.bearer(key) })
           .model({ id: resolved.api.id }),
       )
@@ -201,7 +210,7 @@ export const supported = (model: ModelV2.Info) =>
   (model.api.package === "@ai-sdk/openai" ||
     model.api.package === "@ai-sdk/anthropic" ||
     (model.api.package === "@ai-sdk/openai-compatible" && model.api.url !== undefined) ||
-    compatibleProfile(model.api.package) !== undefined)
+    compatibleBaseURL(model) !== undefined)
 
 /** Resolves models from the catalog belonging to the current Location runtime. */
 export const locationLayer = Layer.effect(
