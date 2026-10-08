@@ -124,6 +124,73 @@ describe("ModelsDevPlugin", () => {
     }),
   )
 
+  it.effect("copies model traits from models.dev into capabilities", () =>
+    Effect.gen(function* () {
+      const integrations = yield* Integration.Service
+      const catalog = yield* Catalog.Service
+      const models = ModelsDev.Service.of({
+        get: () =>
+          Effect.succeed({
+            acme: {
+              id: "acme",
+              name: "Acme",
+              env: [],
+              npm: "@ai-sdk/openai-compatible",
+              api: "https://api.acme.test/v1",
+              models: {
+                "mimo-x": {
+                  id: "mimo-x",
+                  name: "MiMo X",
+                  family: "mimo",
+                  release_date: "2026-01-01",
+                  attachment: true,
+                  reasoning: true,
+                  temperature: false,
+                  tool_call: true,
+                  interleaved: "reasoning_content",
+                  limit: { context: 1_000, input: 900, output: 100 },
+                },
+                "mimo-y": {
+                  id: "mimo-y",
+                  name: "MiMo Y",
+                  family: "mimo",
+                  release_date: "2026-01-01",
+                  attachment: false,
+                  reasoning: false,
+                  tool_call: false,
+                  limit: { context: 1_000, input: 900, output: 100 },
+                },
+              },
+            },
+          } satisfies Record<string, ModelsDev.Provider>),
+        refresh: () => Effect.void,
+      })
+
+      yield* ModelsDevPlugin.effect(
+        host({
+          catalog: catalogHost(catalog),
+          integration: integrationHost(integrations),
+        }),
+      ).pipe(Effect.provideService(ModelsDev.Service, models))
+
+      const providerID = ProviderV2.ID.make("acme")
+      const declared = yield* catalog.model.get(providerID, ModelV2.ID.make("mimo-x"))
+      const undeclared = yield* catalog.model.get(providerID, ModelV2.ID.make("mimo-y"))
+
+      expect(declared?.capabilities).toMatchObject({
+        tools: true,
+        temperature: false,
+        attachment: true,
+        reasoning: true,
+        interleaved: { field: "reasoning_content" },
+      })
+      // Undeclared traits stay absent so the wire never invents a value.
+      expect(undeclared?.capabilities.temperature).toBeUndefined()
+      expect(undeclared?.capabilities.interleaved).toBeUndefined()
+      expect(undeclared?.capabilities.attachment).toBe(false)
+    }),
+  )
+
   it.effect("registers key methods for providers with environment variables", () =>
     Effect.acquireUseRelease(
       Effect.sync(() => {

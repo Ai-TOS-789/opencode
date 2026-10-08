@@ -64,4 +64,41 @@ describe("contract hygiene", () => {
     expect(source).not.toContain("Schema.Any")
     expect(source).not.toContain("Schema.mutable")
   })
+
+  test("Model.Capabilities pins its trait fields and omits undeclared traits", () => {
+    const decode = Schema.decodeUnknownSync(Model.Capabilities)
+    const encode = Schema.encodeSync(Model.Capabilities)
+    expect(
+      Object.keys(
+        decode({
+          tools: true,
+          input: ["text"],
+          output: ["text"],
+          temperature: false,
+          attachment: true,
+          reasoning: true,
+          interleaved: { field: "reasoning_content" },
+        }),
+      ).sort(),
+    ).toEqual(["attachment", "input", "interleaved", "output", "reasoning", "temperature", "tools"])
+    expect(Object.keys(decode({ tools: false, input: [], output: [] })).sort()).toEqual(["input", "output", "tools"])
+    expect(
+      encode({
+        tools: true,
+        input: ["text"],
+        output: ["text"],
+        temperature: undefined,
+        attachment: false,
+        reasoning: false,
+        interleaved: false,
+      }),
+    ).toEqual({
+      tools: true,
+      input: ["text"],
+      output: ["text"],
+      attachment: false,
+      reasoning: false,
+      interleaved: false,
+    })
+  })
 })
