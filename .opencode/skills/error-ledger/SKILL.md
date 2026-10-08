@@ -18,10 +18,11 @@ Every entry below was caught by a human, not by a test. They are recorded so the
 | 5 | Attributed 6 catalog failures to my own change while only *suspecting* the `gpt-5-nano` hardcode | suspicion presented as a finding | label hypotheses as hypotheses; only measured results may be reported as findings |
 | 6 | Nearly edited `~/.config/opencode/opencode.jsonc` — outside the repo, would have broken `mimo-phone` | boundary unchecked — destination never resolved | resolve the path first; outside the working tree means hands off |
 | 7 | Nearly modified turn-checkpoint code that is deliberately deferred pending a recovery policy | design intent not loaded — absence read as a gap | look for a stated deferral before treating missing functionality as missing work |
+| 8 | Planned model-characteristics plumbing from a summary claiming temperature/attachment/reasoning_options were "dropped"; re-measurement showed the runtime path already populates and consumes all three (`provider.ts:1340` populate, `request.ts` temperature gate, `transform.ts` reasoningVariants), and the recalled "6,253 reasoning_options" was actually the `reasoning:true` count (non-empty reasoning_options = 5,063) | claim outran source — stale belief reused without re-measuring | re-measure from a pinned snapshot and read the consuming symbol before planning; grep the consumer first |
 
 ## Root-cause classes
 
-1. **Claim outran source** (1, 3, 4, 7) — asserted or proceeded before the contract, unit frame, or design intent was loaded.
+1. **Claim outran source** (1, 3, 4, 7, 8) — asserted or proceeded before the contract, unit frame, measurement, or design intent was loaded.
 2. **Invalid measurement context** (2) — wrong base, scope, or target.
 3. **Suspicion as finding** (5) — an unverified hypothesis reported as if measured.
 4. **Boundary unchecked** (6) — an action whose destination was never resolved.
