@@ -1057,6 +1057,75 @@ describe("session.llm.stream", () => {
     },
   )
 
+  const xiaomiFixture = { providerID: "xiaomi", modelID: "mimo-v2.5" }
+  it.instance(
+    "sends the MiMo thinking switch from the selected variant",
+    () =>
+      Effect.gen(function* () {
+        const fixture = loadFixture(xiaomiFixture.providerID, xiaomiFixture.modelID)
+        const request = waitRequest(
+          "/chat/completions",
+          new Response(createChatStream("Hello"), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        )
+
+        const resolved = yield* Provider.use.getModel(
+          ProviderV2.ID.make(xiaomiFixture.providerID),
+          ModelV2.ID.make(fixture.model.id),
+        )
+        const sessionID = SessionID.make("session-test-mimo-thinking")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+
+        const user = {
+          id: MessageID.make("msg_user-mimo-thinking"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: {
+            providerID: ProviderV2.ID.make(xiaomiFixture.providerID),
+            modelID: resolved.id,
+            variant: "none",
+          },
+        } satisfies SessionV1.User
+
+        yield* drain({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: ["You are a helpful assistant."],
+          messages: [{ role: "user", content: "Hello" }],
+          tools: {},
+        })
+
+        const capture = yield* Effect.promise(() => request)
+        const body = capture.body
+
+        // MiMo's Chat Completions API only documents `thinking.type` for the
+        // chain-of-thought switch; it rejects or ignores `reasoning_effort`.
+        expect(body.thinking).toEqual({ type: "disabled" })
+        expect(body.reasoning_effort).toBeUndefined()
+      }),
+    {
+      config: () => ({
+        enabled_providers: [xiaomiFixture.providerID],
+        provider: {
+          [xiaomiFixture.providerID]: {
+            options: { apiKey: "test-key", baseURL: `${state.server!.url.origin}/v1` },
+          },
+        },
+      }),
+    },
+  )
+
   const mistralFixture = { providerID: "mistral", modelID: "mistral-small-latest" }
   it.instance(
     "replays native Mistral reasoning from chat history",
