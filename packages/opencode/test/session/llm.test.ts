@@ -1057,6 +1057,87 @@ describe("session.llm.stream", () => {
     },
   )
 
+  const xiaomiFixture = { providerID: "xiaomi", modelID: "mimo-v2.5" }
+  it.instance(
+    "replays MiMo assistant reasoning as reasoning_content in the request body",
+    () =>
+      Effect.gen(function* () {
+        const fixture = loadFixture(xiaomiFixture.providerID, xiaomiFixture.modelID)
+        const request = waitRequest(
+          "/chat/completions",
+          new Response(createChatStream("Hello"), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        )
+
+        const resolved = yield* Provider.use.getModel(
+          ProviderV2.ID.make(xiaomiFixture.providerID),
+          ModelV2.ID.make(fixture.model.id),
+        )
+        const sessionID = SessionID.make("session-test-mimo-reasoning")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+
+        const user = {
+          id: MessageID.make("msg_user-mimo-reasoning"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderV2.ID.make(xiaomiFixture.providerID), modelID: resolved.id },
+        } satisfies SessionV1.User
+
+        yield* drain({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: ["You are a helpful assistant."],
+          messages: [
+            { role: "user", content: "Hello" },
+            {
+              role: "assistant",
+              content: [
+                { type: "reasoning", text: "thinking" },
+                { type: "text", text: "Previous answer" },
+              ],
+            },
+            { role: "user", content: "Continue" },
+            { role: "assistant", content: [{ type: "text", text: "Earlier answer" }] },
+            { role: "user", content: "And again" },
+          ] satisfies ModelMessage[],
+          tools: {},
+        })
+
+        const capture = yield* Effect.promise(() => request)
+        const messages = capture.body.messages as Array<Record<string, unknown>>
+        const assistants = messages.filter((msg) => msg.role === "assistant")
+
+        // MiMo's Chat Completions API returns 400 on later rounds unless the
+        // interleaved reasoning_content field is replayed with the history.
+        expect(assistants[0]?.reasoning_content).toBe("thinking")
+        // Rounds whose reasoning came back empty still replay the field — the
+        // interleaved path sets it unconditionally (DeepSeek-style endpoints
+        // reject a round where the field disappears).
+        expect(assistants[1]?.reasoning_content).toBe("")
+      }),
+    {
+      config: () => ({
+        enabled_providers: [xiaomiFixture.providerID],
+        provider: {
+          [xiaomiFixture.providerID]: {
+            options: { apiKey: "test-key", baseURL: `${state.server!.url.origin}/v1` },
+          },
+        },
+      }),
+    },
+  )
+
   const mistralFixture = { providerID: "mistral", modelID: "mistral-small-latest" }
   it.instance(
     "replays native Mistral reasoning from chat history",
