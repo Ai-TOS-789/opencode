@@ -90,10 +90,13 @@ const apiKey = (model: ModelV2.Info, credential?: Credential.Value) => {
 
 const AI_SDK_PREFIX = "@ai-sdk/"
 const OPENROUTER_PACKAGE = "@openrouter/ai-sdk-provider"
-// Custom AI SDK bindings whose HTTP API still speaks OpenAI chat. merge-gateway documents
-// `@ai-sdk/openai` against its `/v1/ai-sdk` base URL, so the catalog URL is an
-// OpenAI-compatible root and the family lookup below does not apply to it.
-const COMPATIBLE_PACKAGES = new Set(["merge-gateway-ai-sdk-provider"])
+// Custom AI SDK bindings whose HTTP API still speaks OpenAI chat, paired with the
+// documented default root. A catalog URL always wins so a proxying gateway keeps its
+// own base, and bindings without a verified endpoint stay unsupported.
+const COMPATIBLE_ENDPOINTS = new Map([
+  ["@ai-sdk/gateway", "https://ai-gateway.vercel.sh/v1"],
+  ["merge-gateway-ai-sdk-provider", "https://api-gateway.merge.dev/v1/ai-sdk"],
+])
 
 /** Resolves the OpenAI-compatible base URL for an AI SDK package, if it has one. */
 const compatibleBaseURL = (model: ModelV2.Info) => {
@@ -106,8 +109,8 @@ const compatibleBaseURL = (model: ModelV2.Info) => {
       : undefined
   const profile = family === undefined ? undefined : byProvider[family]
   if (profile) return model.api.url ?? profile.baseURL
-  if (COMPATIBLE_PACKAGES.has(pkg)) return model.api.url
-  return undefined
+  const endpoint = COMPATIBLE_ENDPOINTS.get(pkg)
+  return endpoint === undefined ? undefined : model.api.url ?? endpoint
 }
 
 const withDefaults = (model: ModelV2.Info, route: AnyRoute, baseURL = model.api.url) => {

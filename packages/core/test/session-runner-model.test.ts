@@ -392,15 +392,36 @@ describe("SessionRunnerModel", () => {
     }),
   )
 
-  it.effect("requires a catalog URL for custom packages without a family profile", () =>
+  it.effect("routes the Vercel gateway package over the chat route", () =>
+    Effect.gen(function* () {
+      const resolved = yield* SessionRunnerModel.fromCatalogModel(model({ type: "aisdk", package: "@ai-sdk/gateway" }))
+
+      expect(resolved.route).toMatchObject({
+        id: "openai-compatible-chat",
+        endpoint: { baseURL: "https://ai-gateway.vercel.sh/v1", path: "/chat/completions" },
+      })
+    }),
+  )
+
+  it.effect("resolves custom AI SDK packages through their documented endpoint", () =>
     Effect.sync(() => {
+      expect(SessionRunnerModel.supported(model({ type: "aisdk", package: "@ai-sdk/gateway" }))).toBe(true)
       expect(
         SessionRunnerModel.supported(
-          model({ type: "aisdk", package: "merge-gateway-ai-sdk-provider", url: "https://api-gateway.merge.dev/v1/ai-sdk" }),
+          model({
+            type: "aisdk",
+            package: "merge-gateway-ai-sdk-provider",
+            url: "https://api-gateway.merge.dev/v1/ai-sdk",
+          }),
         ),
       ).toBe(true)
-      expect(SessionRunnerModel.supported(model({ type: "aisdk", package: "merge-gateway-ai-sdk-provider" }))).toBe(false)
+      // The catalog URL wins over the documented default when both exist.
+      expect(
+        SessionRunnerModel.supported(model({ type: "aisdk", package: "@ai-sdk/gateway", url: "https://proxy.example/v1" })),
+      ).toBe(true)
+      // Unverified bindings stay unsupported rather than guessing an endpoint.
       expect(SessionRunnerModel.supported(model({ type: "aisdk", package: "venice-ai-sdk-provider" }))).toBe(false)
+      expect(SessionRunnerModel.supported(model({ type: "aisdk", package: "@aihubmix/ai-sdk-provider" }))).toBe(false)
     }),
   )
 
