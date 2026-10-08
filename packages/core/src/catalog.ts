@@ -262,7 +262,8 @@ const layer = Layer.effect(
               age: (Date.now() - model.time.released) / (1000 * 60 * 60 * 24 * 30),
               small: SMALL_MODEL_RE.test(`${model.id} ${model.family ?? ""} ${model.name}`.toLowerCase()),
             })),
-            Array.filter((item) => item.cost > 0 && item.age <= 18),
+            // Free models are the cheapest, so they must stay eligible.
+            Array.filter((item) => item.age <= 18),
           )
 
           const pick = (items: typeof candidates) => {

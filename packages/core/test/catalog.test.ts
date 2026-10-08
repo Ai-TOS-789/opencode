@@ -334,6 +334,48 @@ describe("CatalogV2", () => {
     }),
   )
 
+  it.effect("small model keeps free models eligible", () =>
+    Effect.gen(function* () {
+      const catalog = yield* Catalog.Service
+      const providerID = ProviderV2.ID.make("test")
+      yield* catalog.transform((catalog) => {
+        catalog.provider.update(providerID, () => {})
+        catalog.model.update(providerID, ModelV2.ID.make("paid-flash"), (model) => {
+          model.capabilities.input = ["text"]
+          model.capabilities.output = ["text"]
+          model.cost = [{ input: 10, output: 10, cache: { read: 0, write: 0 } }]
+          model.time.released = Date.now()
+        })
+        catalog.model.update(providerID, ModelV2.ID.make("free-flash"), (model) => {
+          model.capabilities.input = ["text"]
+          model.capabilities.output = ["text"]
+          model.cost = [{ input: 0, output: 0, cache: { read: 0, write: 0 } }]
+          model.time.released = Date.now()
+        })
+      })
+
+      expect((yield* catalog.model.small(providerID))?.id).toMatch("free-flash")
+    }),
+  )
+
+  it.effect("small model for opencode falls through to generic selection", () =>
+    Effect.gen(function* () {
+      const catalog = yield* Catalog.Service
+      const providerID = ProviderV2.ID.opencode
+      yield* catalog.transform((catalog) => {
+        catalog.provider.update(providerID, () => {})
+        catalog.model.update(providerID, ModelV2.ID.make("mimo-v2.6-flash-free"), (model) => {
+          model.capabilities.input = ["text"]
+          model.capabilities.output = ["text"]
+          model.cost = [{ input: 0, output: 0, cache: { read: 0, write: 0 } }]
+          model.time.released = Date.now()
+        })
+      })
+
+      expect((yield* catalog.model.small(providerID))?.id).toMatch("mimo-v2.6-flash-free")
+    }),
+  )
+
   it.effect("removes providers denied by policy after loading", () =>
     Effect.gen(function* () {
       const catalog = yield* Catalog.Service
