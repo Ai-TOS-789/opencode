@@ -1,5 +1,6 @@
+- Many packages carry their own `AGENTS.md` with package-specific rules (e.g. `packages/llm`, `packages/opencode`, `packages/schema`, `packages/core/src/tool`, `packages/opencode/src/session/llm`). Read the one for the package you are editing; this file only holds repo-wide rules.
 - To regenerate the legacy JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
-- After changing the public Protocol or Server `HttpApi`, run `bun run generate` from `packages/client`. Do not edit `src/generated` or `src/generated-effect` directly.
+- After changing the public Protocol or Server `HttpApi`, run `bun run generate` from `packages/client`. Do not edit `src/generated` or `src/generated-effect` directly. CI enforces this with `bun run check:generated` from `packages/client` (regenerate, then `git diff --exit-code`) and gates endpoint coverage with `bun run test:httpapi` from `packages/opencode`.
 - Keep runtime dependencies directed from Schema to Core and Protocol, then from Core and Protocol to Server. Client runtime code may depend on Schema and Protocol but never Core or Server; `sdk-next` composes Client, Core, and Server.
 - The default branch in this repo is `dev`.
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
@@ -142,11 +143,18 @@ const table = sqliteTable("session", {
 
 - Avoid mocks as much as possible, you shouldn't be using globalThis.\* at all unless it's the only option.
 - Test actual implementation, do not duplicate logic into tests
-- Tests cannot run from repo root (guard: `do-not-run-tests-from-root`); run from package dirs like `packages/opencode`.
+- `bun test` fails at the repo root by design — the root `test` script is a guard that exits 1. Run tests from a package dir like `packages/opencode`.
+- To run every package's tests, use `bun turbo test` from the root (this is what CI runs, as `GITHUB_ACTIONS=false bun turbo test`). Not every workspace package has a `test` script.
+- App e2e tests are Playwright: `bun --cwd packages/app test:e2e:local`. They need browsers installed first (`bunx playwright install chromium` from `packages/app`).
 
 ## Type Checking
 
 - Always run `bun typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.
+- `bun typecheck` at the root is also valid; it fans out through `bun turbo typecheck`. CI runs it from the root.
+
+## Lint
+
+- `bun lint` runs oxlint (config: `.oxlintrc.json`). Lint is not part of CI, so run it locally before pushing.
 
 ## V2 Session Core
 
