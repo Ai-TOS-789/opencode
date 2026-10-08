@@ -329,6 +329,52 @@ describe("SessionRunnerModel", () => {
     }),
   )
 
+  it.effect("serves profile-backed OpenAI-compatible packages over the shared chat route", () =>
+    Effect.gen(function* () {
+      const resolved = yield* SessionRunnerModel.fromCatalogModel(
+        model({ type: "aisdk", package: "@ai-sdk/groq" }),
+      )
+
+      expect(resolved.route).toMatchObject({
+        id: "openai-compatible-chat",
+        endpoint: { baseURL: "https://api.groq.com/openai/v1", path: "/chat/completions" },
+      })
+    }),
+  )
+
+  it.effect("prefers an explicit catalog URL over the provider profile", () =>
+    Effect.gen(function* () {
+      const resolved = yield* SessionRunnerModel.fromCatalogModel(
+        model({ type: "aisdk", package: "@openrouter/ai-sdk-provider", url: "https://openrouter.example/v1" }),
+      )
+
+      expect(resolved.route).toMatchObject({
+        id: "openai-compatible-chat",
+        endpoint: { baseURL: "https://openrouter.example/v1" },
+      })
+    }),
+  )
+
+  it.effect("reports every profile-backed package as supported", () =>
+    Effect.sync(() => {
+      const packages = [
+        "@ai-sdk/cerebras",
+        "@ai-sdk/deepinfra",
+        "@ai-sdk/groq",
+        "@ai-sdk/mistral",
+        "@ai-sdk/perplexity",
+        "@ai-sdk/togetherai",
+        "@ai-sdk/xai",
+        "@openrouter/ai-sdk-provider",
+      ]
+
+      expect(packages.map((pkg) => SessionRunnerModel.supported(model({ type: "aisdk", package: pkg })))).toEqual(
+        packages.map(() => true),
+      )
+      expect(SessionRunnerModel.supported(model({ type: "aisdk", package: "@ai-sdk/google" }))).toBe(false)
+    }),
+  )
+
   it.effect("reports whether a catalog model has a supported native route", () =>
     Effect.sync(() => {
       expect(

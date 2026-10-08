@@ -5,6 +5,7 @@ import { type Model } from "@opencode-ai/llm"
 import * as AnthropicMessages from "@opencode-ai/llm/protocols/anthropic-messages"
 import * as OpenAICompatibleChat from "@opencode-ai/llm/protocols/openai-compatible-chat"
 import * as OpenAIResponses from "@opencode-ai/llm/protocols/openai-responses"
+import { byProvider } from "@opencode-ai/llm/providers/openai-compatible-profile"
 import { Auth, type AnyRoute } from "@opencode-ai/llm/route"
 import { Context, Effect, Layer, Schema } from "effect"
 import { produce } from "immer"
@@ -87,14 +88,27 @@ const apiKey = (model: ModelV2.Info, credential?: Credential.Value) => {
   if (typeof value === "string") return Auth.value(value)
 }
 
-const withDefaults = (model: ModelV2.Info, route: AnyRoute) => {
+const AI_SDK_PREFIX = "@ai-sdk/"
+const OPENROUTER_PACKAGE = "@openrouter/ai-sdk-provider"
+
+/** Maps an AI SDK package onto its OpenAI-compatible family profile, if it has one. */
+const compatibleProfile = (pkg: string) => {
+  const family = pkg.startsWith(AI_SDK_PREFIX)
+    ? pkg.slice(AI_SDK_PREFIX.length)
+    : pkg === OPENROUTER_PACKAGE
+      ? "openrouter"
+      : undefined
+  return family === undefined ? undefined : byProvider[family]
+}
+
+const withDefaults = (model: ModelV2.Info, route: AnyRoute, baseURL = model.api.url) => {
   const body = model.request.body
   const httpBody = Object.hasOwn(body, "apiKey")
     ? Object.fromEntries(Object.entries(body).filter(([key]) => key !== "apiKey"))
     : body
   return route.with({
     provider: model.providerID,
-    endpoint: model.api.url === undefined ? undefined : { baseURL: model.api.url },
+    endpoint: baseURL === undefined ? undefined : { baseURL },
     headers: model.request.headers,
     http: { body: httpBody },
     limits: { context: model.limit.context, output: model.limit.output },
@@ -160,6 +174,16 @@ export const fromCatalogModel = (
         .model({ id: resolved.api.id }),
     )
   }
+  if (resolved.api.type === "aisdk") {
+    const profile = compatibleProfile(resolved.api.package)
+    if (profile) {
+      return Effect.succeed(
+        withDefaults(resolved, OpenAICompatibleChat.route, resolved.api.url ?? profile.baseURL)
+          .with({ auth: key === undefined ? Auth.none : Auth.bearer(key) })
+          .model({ id: resolved.api.id }),
+      )
+    }
+  }
   return Effect.fail(
     new UnsupportedApiError({
       providerID: resolved.providerID,
@@ -176,7 +200,8 @@ export const supported = (model: ModelV2.Info) =>
   model.api.type === "aisdk" &&
   (model.api.package === "@ai-sdk/openai" ||
     model.api.package === "@ai-sdk/anthropic" ||
-    (model.api.package === "@ai-sdk/openai-compatible" && model.api.url !== undefined))
+    (model.api.package === "@ai-sdk/openai-compatible" && model.api.url !== undefined) ||
+    compatibleProfile(model.api.package) !== undefined)
 
 /** Resolves models from the catalog belonging to the current Location runtime. */
 export const locationLayer = Layer.effect(
