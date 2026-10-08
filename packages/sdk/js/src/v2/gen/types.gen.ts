@@ -4797,6 +4797,14 @@ export type ModelCapabilities = {
   tools: boolean
   input: Array<string>
   output: Array<string>
+  temperature?: boolean
+  attachment?: boolean
+  reasoning?: boolean
+  interleaved?:
+    | boolean
+    | {
+        field: string
+      }
 }
 
 export type ModelCost = {

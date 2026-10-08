@@ -1962,6 +1962,10 @@ export type ModelsListOutput = {
       readonly tools: boolean
       readonly input: ReadonlyArray<string>
       readonly output: ReadonlyArray<string>
+      readonly temperature?: boolean
+      readonly attachment?: boolean
+      readonly reasoning?: boolean
+      readonly interleaved?: boolean | { readonly field: string }
     }
     readonly request: {
       readonly headers: { readonly [x: string]: string }

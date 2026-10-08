@@ -29813,6 +29813,32 @@
             "items": {
               "type": "string"
             }
+          },
+          "temperature": {
+            "type": "boolean"
+          },
+          "attachment": {
+            "type": "boolean"
+          },
+          "reasoning": {
+            "type": "boolean"
+          },
+          "interleaved": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  }
+                },
+                "required": ["field"],
+                "additionalProperties": false
+              }
+            ]
           }
         },
         "required": ["tools", "input", "output"],

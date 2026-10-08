@@ -26,6 +26,12 @@ export const Capabilities = Schema.Struct({
   tools: Schema.Boolean,
   input: Schema.Array(Schema.String),
   output: Schema.Array(Schema.String),
+  // Model traits from models.dev. Optional because providers omit them; absent
+  // means undeclared and consumers must treat that like "not supported".
+  temperature: Schema.Boolean.pipe(optional),
+  attachment: Schema.Boolean.pipe(optional),
+  reasoning: Schema.Boolean.pipe(optional),
+  interleaved: Schema.Union([Schema.Boolean, Schema.Struct({ field: Schema.String })]).pipe(optional),
 }).annotate({ identifier: "Model.Capabilities" })
 
 export interface Cost extends Schema.Schema.Type<typeof Cost> {}

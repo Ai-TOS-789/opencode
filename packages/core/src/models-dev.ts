@@ -71,7 +71,9 @@ export const Model = Schema.Struct({
   release_date: Schema.String,
   attachment: Schema.Boolean,
   reasoning: Schema.Boolean,
-  temperature: Schema.Boolean,
+  // 564 models.dev entries omit temperature (measured against api.json); the
+  // catalog is cast, never decoded, so the type must admit the missing value.
+  temperature: Schema.optional(Schema.Boolean),
   tool_call: Schema.Boolean,
   reasoning_options: Schema.optional(Schema.Array(ReasoningOption)),
   interleaved: Schema.optional(

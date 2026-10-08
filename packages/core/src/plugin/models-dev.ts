@@ -101,6 +101,12 @@ function applyModel(
     tools: model.tool_call,
     input: [...(model.modalities?.input ?? [])],
     output: [...(model.modalities?.output ?? [])],
+    temperature: model.temperature,
+    attachment: model.attachment,
+    reasoning: model.reasoning,
+    // models.dev allows a bare field name; normalize to the {field} shape the
+    // runtime uses so core and opencode read the same value.
+    interleaved: typeof model.interleaved === "string" ? { field: model.interleaved } : model.interleaved,
   }
   draft.variants = []
   draft.time.released = released(model.release_date)
