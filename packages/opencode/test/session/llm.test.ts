@@ -2264,3 +2264,146 @@ describe("session.llm.stream", () => {
     },
   )
 })
+
+describe("session.llm.stream - MiMo request body", () => {
+  const mimoFixture = { providerID: "xiaomi", modelID: "mimo-v2.5" }
+
+  const mimoConfig = () => ({
+    enabled_providers: [mimoFixture.providerID],
+    provider: {
+      [mimoFixture.providerID]: {
+        options: { apiKey: "test-key", baseURL: `${state.server!.url.origin}/v1` },
+      },
+    },
+  })
+
+  it.instance(
+    "omits sampling and tool_choice params and sends max_tokens by default",
+    () =>
+      Effect.gen(function* () {
+        const fixture = loadFixture(mimoFixture.providerID, mimoFixture.modelID)
+        const request = waitRequest(
+          "/chat/completions",
+          new Response(createChatStream("Hello"), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        )
+        const resolved = yield* Provider.use.getModel(
+          ProviderV2.ID.make(mimoFixture.providerID),
+          ModelV2.ID.make(fixture.model.id),
+        )
+        const sessionID = SessionID.make("session-mimo-body-default")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        const user = {
+          id: MessageID.make("msg_user-mimo-body-default"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderV2.ID.make(mimoFixture.providerID), modelID: resolved.id },
+        } satisfies SessionV1.User
+
+        yield* drain({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: ["You are a helpful assistant."],
+          messages: [{ role: "user", content: "Hello" }],
+          tools: {},
+        })
+
+        const capture = yield* Effect.promise(() => request)
+        const body = capture.body
+
+        // MiMo forces temperature=1.0/top_p=0.95 while thinking is enabled, so
+        // the default wire body must not carry sampling params at all. The
+        // temperature gate opens (models.dev declares temperature: true) but
+        // ProviderTransform has no mimo entry and falls through to undefined.
+        expect("temperature" in body).toBe(false)
+        expect("top_p" in body).toBe(false)
+        // No tool_choice unless a flow forces one (see the override test below).
+        expect("tool_choice" in body).toBe(false)
+        // Pin the exact token-limit key for this provider: MiMo documents
+        // max_completion_tokens, so whichever key lands here is what OpenCode
+        // actually sends.
+        expect(body.max_tokens).toBe(ProviderTransform.maxOutputTokens(resolved))
+        expect("max_completion_tokens" in body).toBe(false)
+        expect(body.model).toBe(resolved.api.id)
+      }),
+    { config: mimoConfig },
+  )
+
+  it.instance(
+    "carries explicit temperature, top_p, and required tool_choice to the wire",
+    () =>
+      Effect.gen(function* () {
+        const fixture = loadFixture(mimoFixture.providerID, mimoFixture.modelID)
+        const request = waitRequest(
+          "/chat/completions",
+          new Response(createChatStream("Hello"), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        )
+        const resolved = yield* Provider.use.getModel(
+          ProviderV2.ID.make(mimoFixture.providerID),
+          ModelV2.ID.make(fixture.model.id),
+        )
+        const sessionID = SessionID.make("session-mimo-body-override")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          temperature: 0.7,
+          topP: 0.95,
+        } satisfies Agent.Info
+        const user = {
+          id: MessageID.make("msg_user-mimo-body-override"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderV2.ID.make(mimoFixture.providerID), modelID: resolved.id },
+          tools: { question: true },
+        } satisfies SessionV1.User
+
+        yield* drain({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          permission: [{ permission: "question", pattern: "*", action: "allow" }],
+          system: ["You are a helpful assistant."],
+          messages: [{ role: "user", content: "Hello" }],
+          tools: {
+            question: tool({
+              description: "Ask a question",
+              inputSchema: z.object({}),
+              execute: async () => ({ output: "" }),
+            }),
+          },
+          toolChoice: "required",
+        })
+
+        const capture = yield* Effect.promise(() => request)
+        const body = capture.body
+
+        // Explicit user/agent overrides win over the model defaults...
+        expect(body.temperature).toBe(0.7)
+        expect(body.top_p).toBe(0.95)
+        // ...and prompt.ts forces toolChoice "required" whenever a user message
+        // carries a json_schema format. MiMo documents tool_choice as auto-only,
+        // so this is the documented-mismatch path reaching the wire.
+        expect(body.tool_choice).toBe("required")
+      }),
+    { config: mimoConfig },
+  )
+})
