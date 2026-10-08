@@ -95,7 +95,9 @@ const OPENROUTER_PACKAGE = "@openrouter/ai-sdk-provider"
 // own base, and bindings without a verified endpoint stay unsupported.
 const COMPATIBLE_ENDPOINTS = new Map([
   ["@ai-sdk/gateway", "https://ai-gateway.vercel.sh/v1"],
+  ["@aihubmix/ai-sdk-provider", "https://api.aihubmix.com/v1"],
   ["merge-gateway-ai-sdk-provider", "https://api-gateway.merge.dev/v1/ai-sdk"],
+  ["venice-ai-sdk-provider", "https://api.venice.ai/api/v1"],
 ])
 
 /** Resolves the OpenAI-compatible base URL for an AI SDK package, if it has one. */

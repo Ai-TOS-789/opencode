@@ -419,9 +419,30 @@ describe("SessionRunnerModel", () => {
       expect(
         SessionRunnerModel.supported(model({ type: "aisdk", package: "@ai-sdk/gateway", url: "https://proxy.example/v1" })),
       ).toBe(true)
-      // Unverified bindings stay unsupported rather than guessing an endpoint.
-      expect(SessionRunnerModel.supported(model({ type: "aisdk", package: "venice-ai-sdk-provider" }))).toBe(false)
-      expect(SessionRunnerModel.supported(model({ type: "aisdk", package: "@aihubmix/ai-sdk-provider" }))).toBe(false)
+      // Bindings whose endpoint depends on user-specific host config stay unsupported
+      // rather than guessing an endpoint.
+      expect(SessionRunnerModel.supported(model({ type: "aisdk", package: "gitlab-ai-provider" }))).toBe(false)
+      expect(SessionRunnerModel.supported(model({ type: "aisdk", package: "ai-gateway-provider" }))).toBe(false)
+    }),
+  )
+
+  it.effect("routes community provider bindings through their documented endpoint", () =>
+    Effect.gen(function* () {
+      const venice = yield* SessionRunnerModel.fromCatalogModel(
+        model({ type: "aisdk", package: "venice-ai-sdk-provider" }),
+      )
+      expect(venice.route).toMatchObject({
+        id: "openai-compatible-chat",
+        endpoint: { baseURL: "https://api.venice.ai/api/v1", path: "/chat/completions" },
+      })
+
+      const hubmix = yield* SessionRunnerModel.fromCatalogModel(
+        model({ type: "aisdk", package: "@aihubmix/ai-sdk-provider" }),
+      )
+      expect(hubmix.route).toMatchObject({
+        id: "openai-compatible-chat",
+        endpoint: { baseURL: "https://api.aihubmix.com/v1", path: "/chat/completions" },
+      })
     }),
   )
 
