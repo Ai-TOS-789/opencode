@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Schema } from "effect"
+import { Schema, SchemaAST } from "effect"
 import { Agent } from "../src/agent"
 import { FileSystem } from "../src/filesystem"
 import { Model } from "../src/model"
@@ -51,6 +51,36 @@ describe("contract hygiene", () => {
 
     expect(identifiers.every((identifier) => typeof identifier === "string")).toBe(true)
     expect(new Set(identifiers).size).toBe(identifiers.length)
+  })
+
+  test("model info pins its exact field set", () => {
+    const ast = Model.Info.ast
+    expect(SchemaAST.isObjects(ast)).toBe(true)
+    if (!SchemaAST.isObjects(ast)) return
+
+    // Pins the capability gap: a field appearing or disappearing here must be a
+    // deliberate edit, so claims about what OpenCode knows per model stay
+    // checkable against this list instead of being recalled from memory.
+    expect(
+      ast.propertySignatures
+        .map((field) => field.name)
+        .slice()
+        .sort(),
+    ).toEqual([
+      "api",
+      "capabilities",
+      "cost",
+      "enabled",
+      "family",
+      "id",
+      "limit",
+      "name",
+      "providerID",
+      "request",
+      "status",
+      "time",
+      "variants",
+    ])
   })
 
   test("current source avoids Any and mutable contract wrappers", async () => {
