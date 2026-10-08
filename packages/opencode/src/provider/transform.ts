@@ -1765,7 +1765,22 @@ function nonEmptyVariants(variants: NonNullable<Provider.Model["variants"]>): Pr
   return Object.keys(variants).length > 0 ? variants : undefined
 }
 
+// MiMo's Chat Completions API (mimo.mi.com/docs/api/chat/openai-api) exposes one
+// documented chain-of-thought switch: `thinking.type` (enabled | disabled,
+// default enabled). Its body has no `reasoning_effort`, and its Responses docs
+// state effort levels are not differentiated, so toggle-declared models get the
+// switch itself instead of the generic effort fallback.
+function isMiMoApi(model: Provider.Model) {
+  if (model.providerID.toLowerCase().startsWith("xiaomi")) return true
+  return model.api.url.toLowerCase().includes("xiaomimimo.com")
+}
+
 function reasoningToggle(model: Provider.Model): NonNullable<Provider.Model["variants"]> {
+  if (isMiMoApi(model))
+    return {
+      none: { thinking: { type: "disabled" } },
+      high: { thinking: { type: "enabled" } },
+    }
   if (model.api.npm === "@ai-sdk/alibaba")
     return {
       none: { enableThinking: false },

@@ -1548,6 +1548,34 @@ test("models.dev reasoning options replace generated variants and unsupported to
   expect(models["gemini-3-pro-fast"].variants).toEqual(models.override.variants)
 })
 
+test("xiaomi MiMo toggle variants map to the documented thinking switch", () => {
+  const provider = {
+    id: "xiaomi",
+    name: "Xiaomi",
+    env: ["XIAOMI_API_KEY"],
+    npm: "@ai-sdk/openai-compatible",
+    api: "https://api.xiaomimimo.com/v1",
+    models: {
+      "mimo-v2.6-pro": {
+        id: "mimo-v2.6-pro",
+        name: "MiMo V2.6 Pro",
+        reasoning: true,
+        reasoning_options: [{ type: "toggle" }],
+        limit: { context: 1_048_576, output: 131_072 },
+      },
+    },
+  } as unknown as ModelsDev.Provider
+
+  // MiMo's Chat Completions API documents only `thinking.type` as the
+  // chain-of-thought switch (enabled | disabled, default enabled). Its body has
+  // no `reasoning_effort`, so the generic effort fallback cannot turn thinking
+  // off and would send an undocumented parameter.
+  expect(Provider.fromModelsDevProvider(provider).models["mimo-v2.6-pro"].variants).toEqual({
+    none: { thinking: { type: "disabled" } },
+    high: { thinking: { type: "enabled" } },
+  })
+})
+
 test("MERGE Gateway exposes declared effort variants without model-specific handling", () => {
   const provider = {
     id: "merge-gateway",
