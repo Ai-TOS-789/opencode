@@ -27,6 +27,8 @@ const FOLDERS = new Set([
   "__pycache__",
   ".pytest_cache",
   "mypy_cache",
+  ".venv",
+  "venv",
   ".history",
   ".gradle",
 ])
